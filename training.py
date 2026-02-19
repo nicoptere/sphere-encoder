@@ -71,16 +71,45 @@ def infer_config(dataset, args):
     sample, _ = dataset[0]
     c, h, w = sample.shape
     
-    latent_dim = 128
-    if h >= 256: latent_dim = 512
-    elif h >= 128: latent_dim = 256
-    elif h >= 64: latent_dim = 256
-    
-    print(f"Inferred configuration from data: Size={h}x{w}, Channels={c}")
-    print(f"Selecting Latent Dim: {latent_dim}")
+    # Defaults
+    if args.model == 'vit':
+        # Paper recommendations for ViT:
+        latent_dim = 2048
+        patch_size = 2
+        embed_dim = 512
+        depth = 6
+        num_heads = 8
+        
+        if h >= 256: 
+            patch_size = 8
+            latent_dim = 32 * 32 * 64
+            embed_dim = 1024
+            depth = 24
+            num_heads = 16
+        elif h >= 64:
+            patch_size = 4
+            latent_dim = 4096
+    else:
+        # Defaults for ConvNet
+        # 512 is generally enough for ConvNet on 32x32-128x128
+        latent_dim = 512
+        patch_size = 2 # Unused but keep for safety
+        embed_dim = 512
+        depth = 6
+        num_heads = 8
+        
+        if h >= 256: latent_dim = 1024
+
+    print(f"Inferred configuration: Size={h}x{w}, Model={args.model}, Latent={latent_dim}")
     
     config = Config()
+    config.model_type = args.model
     config.image_size = h
+    config.patch_size = patch_size
+    config.embed_dim = embed_dim
+    config.depth = depth
+    config.num_heads = num_heads
+    
     config.channels = c
     config.latent_dim = latent_dim
     config.batch_size = args.batch_size
@@ -96,6 +125,7 @@ def infer_config(dataset, args):
             print(f"Resuming from latest run: {latest_run}")
             config.results_dir = latest_run
             config.checkpoint_dir = os.path.join(config.results_dir, 'checkpoints')
+            config.images_dir = os.path.join(config.results_dir, 'images')
             return config
     
     # New Run
@@ -104,6 +134,7 @@ def infer_config(dataset, args):
     
     config.results_dir = os.path.join('results', run_name)
     config.checkpoint_dir = os.path.join(config.results_dir, 'checkpoints')
+    config.images_dir = os.path.join(config.results_dir, 'images')
     
     return config
 
@@ -121,6 +152,7 @@ def train(args):
     # Create Dirs
     os.makedirs(config.results_dir, exist_ok=True)
     os.makedirs(config.checkpoint_dir, exist_ok=True)
+    os.makedirs(config.images_dir, exist_ok=True)
     
     print(f"Results will be saved to: {config.results_dir}")
     
@@ -172,11 +204,46 @@ def train(args):
                 
             images = images.to(config.device)
             optimizer.zero_grad()
-            recon, _, _ = model(images, training=True)
-            loss = criterion(recon, images)
+            
+            # --- Paper Implementation: Noise Injection ---
+            # 1. Clean Latent
+            v_clean = model.encode(images)
+            
+            # 2. Generate Noise Parameters
+            # Jittering Sigma: r ~ U(0, 1)
+            # sigma = r * sigma_max
+            r = torch.rand(1, device=config.device) 
+            sigma = r * config.sigma_max
+            
+            # Random direction e ~ N(0, I)
+            e = torch.randn_like(v_clean)
+            
+            # 3. Large Noise Latent (v_NOISY)
+            # v_NOISY = f(v + sigma * e)
+            v_noisy = torch.nn.functional.normalize(v_clean + sigma * e, p=2, dim=1)
+            
+            # 4. Small Noise Latent (v_noisy_sub)
+            # s ~ U(0, 0.5)
+            # sigma_sub = s * sigma
+            s = torch.rand(1, device=config.device) * 0.5
+            sigma_sub = s * sigma
+            v_noisy_sub = torch.nn.functional.normalize(v_clean + sigma_sub * e, p=2, dim=1)
+            
+            # 5. Compute Loss
+            # Returns: l_pix_recon, l_pix_con, l_lat_con, recon_sub
+            l_recon, l_pix_con, l_lat_con, recon = model.compute_loss(images, v_noisy, v_noisy_sub, v_clean)
+            
+            # Weights from Paper (CIFAR-10 / Small Image)
+            # Table 16: L_pix-recon=1.0, L_pix-con=0.5, L_lat-con=0.1
+            loss = 1.0 * l_recon + 0.5 * l_pix_con + 0.1 * l_lat_con
+            
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
+            
+            # Debug log spread (first iter of batch)
+            if i == 0:
+                print(f"  Losses: Total={loss.item():.4f} | Recon={l_recon.item():.4f} | PixCon={l_pix_con.item():.4f} | LatCon={l_lat_con.item():.4f}")
             
         print(f"Epoch [{epoch+1}/{config.epochs}] Loss: {running_loss/config.iterations_per_epoch:.4f}")
         
@@ -193,9 +260,10 @@ def train(args):
             with torch.no_grad():
                 model.eval()
                 # Reconstruction
-                recon = model(images[:4].to(config.device), training=False)
+                recon = model(images[:4].to(config.device))
+                if isinstance(recon, tuple): recon = recon[0] # Handle tuple return if forward changed
                 save_image(torch.cat([images[:4], recon]) * 0.5 + 0.5, 
-                           os.path.join(config.results_dir, f"epoch_{epoch+1}_recon.png"), nrow=4)
+                           os.path.join(config.images_dir, f"epoch_{epoch+1}_recon.png"), nrow=4)
                 
                 # Generation (1, 2, 4 Steps)
                 z = torch.randn(8, config.latent_dim, device=config.device)
@@ -204,11 +272,12 @@ def train(args):
                 for steps in [1, 2, 4]:
                     gen = model.decode_multistep(v, steps=steps)
                     save_image(gen * 0.5 + 0.5, 
-                               os.path.join(config.results_dir, f"epoch_{epoch+1}_step_{steps}.png"), nrow=4)
+                               os.path.join(config.images_dir, f"epoch_{epoch+1}_step_{steps}.png"), nrow=4)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='cifar10', help='Dataset name (cifar10, flowers102) or path')
+    parser.add_argument('--model', type=str, default='convnet', choices=['convnet', 'vit'], help='Model architecture')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--epochs', type=int, default=250, help='Total number of epochs')
     parser.add_argument('--steps', type=int, default=100, help='Steps (iterations) per epoch')
