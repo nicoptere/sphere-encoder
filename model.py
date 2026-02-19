@@ -194,6 +194,8 @@ class ViTSphereEncoder(nn.Module):
         # Let's stick to unit sphere (radius 1) and use the tan(alpha) logic which is scale invariant.
         
         v = torch.nn.functional.normalize(z, p=2, dim=1)
+        # Fix: Scale to radius sqrt(L) to maintain variance ~1 and match noise magnitude
+        v = v * math.sqrt(self.config.latent_dim)
         return v
 
     def decode(self, v):
@@ -255,33 +257,66 @@ class ConvSphereEncoder(nn.Module):
         self.config = config
         latent_dim = config.latent_dim
         
-        # Encoder: 32x32 -> 1x1 (flattened)
-        self.encoder_conv = nn.Sequential(
-            nn.Conv2d(config.channels, 32, kernel_size=4, stride=2, padding=1), # 16x16
-            nn.BatchNorm2d(32),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1), # 8x8
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1), # 4x4
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2),
-        )
-        self.encoder_linear = nn.Linear(128 * 4 * 4, latent_dim)
-
-        # Decoder: Latent -> 32x32
-        self.decoder_input = nn.Linear(latent_dim, 128 * 4 * 4)
+        # Dynamic Encoder Construction
+        # We target a 4x4 spatial embedding before flattening
+        # Number of downsamples = log2(image_size / 4)
         
-        self.decoder_conv = nn.Sequential(
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1), # 8x8
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1), # 16x16
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, config.channels, kernel_size=4, stride=2, padding=1),  # 32x32
-            nn.Tanh() # Output ranges [-1, 1]
-        )
+        layers = []
+        in_c = config.channels
+        out_c = 32
+        current_size = config.image_size
+        
+        # Keep track of channel sizes for decoder
+        self.channel_sequence = []
+        
+        while current_size > 4:
+            layers.append(nn.Conv2d(in_c, out_c, kernel_size=4, stride=2, padding=1))
+            layers.append(nn.BatchNorm2d(out_c))
+            layers.append(nn.LeakyReLU(0.2, inplace=True))
+            
+            self.channel_sequence.append(out_c)
+            in_c = out_c
+            out_c = min(out_c * 2, 512) # Cap max channels
+            current_size //= 2
+            
+        self.encoder_conv = nn.Sequential(*layers)
+        self.final_channels = in_c
+        
+        self.flat_features = self.final_channels * 4 * 4
+        self.encoder_linear = nn.Linear(self.flat_features, latent_dim)
+
+        # Decoder: Mirror of Encoder
+        self.decoder_input = nn.Linear(latent_dim, self.flat_features)
+        
+        decoder_layers = []
+        # Reverse channel sequence: e.g. [32, 64, 128] -> [128, 64, 32]
+        # Input to first deconv is final_channels (128)
+        
+        reversed_channels = self.channel_sequence[::-1]
+        current_in = self.final_channels
+        
+        # All layers except last
+        for out_c in reversed_channels[1:]:
+            decoder_layers.append(nn.ConvTranspose2d(current_in, out_c, kernel_size=4, stride=2, padding=1))
+            decoder_layers.append(nn.BatchNorm2d(out_c))
+            decoder_layers.append(nn.ReLU(inplace=True))
+            current_in = out_c
+            
+        # Final layer to original channels
+        # If sequence was just [32], loop above doesn't run, current_in is 32. 
+        # But wait, if sequence is [32], reversed is [32]. reversed[1:] is [].
+        # So we just do one layer 32 -> 3. Correct.
+        
+        # Use first channel size from sequence (which is the last in reverse) as the target for the penultimate layer? 
+        # No, the loop handles intermediate steps.
+        # The final layer goes from `current_in` (which should be 32) to `config.channels`.
+        # Is `current_in` guaranteed to be 32? 
+        # Yes, because out_c starts at 32.
+        
+        decoder_layers.append(nn.ConvTranspose2d(current_in, config.channels, kernel_size=4, stride=2, padding=1))
+        decoder_layers.append(nn.Tanh())
+        
+        self.decoder_conv = nn.Sequential(*decoder_layers)
         
         # Perceptual Loss
         self.perceptual_loss = VGGPerceptualLoss()
@@ -297,7 +332,7 @@ class ConvSphereEncoder(nn.Module):
         
     def decode(self, v):
         x = self.decoder_input(v)
-        x = x.view(-1, 128, 4, 4)
+        x = x.view(-1, self.final_channels, 4, 4)
         x = self.decoder_conv(x)
         return x
 

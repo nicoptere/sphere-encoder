@@ -2,6 +2,7 @@
 import os
 import argparse
 import datetime
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -221,6 +222,8 @@ def train(args):
             # 3. Large Noise Latent (v_NOISY)
             # v_NOISY = f(v + sigma * e)
             v_noisy = torch.nn.functional.normalize(v_clean + sigma * e, p=2, dim=1)
+            # Fix: Scale to radius sqrt(L) matches model.encode output
+            v_noisy = v_noisy * math.sqrt(config.latent_dim)
             
             # 4. Small Noise Latent (v_noisy_sub)
             # s ~ U(0, 0.5)
@@ -228,6 +231,8 @@ def train(args):
             s = torch.rand(1, device=config.device) * 0.5
             sigma_sub = s * sigma
             v_noisy_sub = torch.nn.functional.normalize(v_clean + sigma_sub * e, p=2, dim=1)
+            # Fix: Scale to radius sqrt(L)
+            v_noisy_sub = v_noisy_sub * math.sqrt(config.latent_dim)
             
             # 5. Compute Loss
             # Returns: l_pix_recon, l_pix_con, l_lat_con, recon_sub
@@ -265,14 +270,15 @@ def train(args):
                 save_image(torch.cat([images[:4], recon]) * 0.5 + 0.5, 
                            os.path.join(config.images_dir, f"epoch_{epoch+1}_recon.png"), nrow=4)
                 
-                # Generation (1, 2, 4 Steps)
+                # Generation (1 Step only)
                 z = torch.randn(8, config.latent_dim, device=config.device)
                 v = torch.nn.functional.normalize(z, p=2, dim=1)
+                # Scale v to match the sphere radius used in training!
+                v = v * math.sqrt(config.latent_dim)
                 
-                for steps in [1, 2, 4]:
-                    gen = model.decode_multistep(v, steps=steps)
-                    save_image(gen * 0.5 + 0.5, 
-                               os.path.join(config.images_dir, f"epoch_{epoch+1}_step_{steps}.png"), nrow=4)
+                gen = model.decode_multistep(v, steps=1)
+                save_image(gen * 0.5 + 0.5, 
+                           os.path.join(config.images_dir, f"epoch_{epoch+1}_sample.png"), nrow=4)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

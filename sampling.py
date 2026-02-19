@@ -5,6 +5,7 @@ from model import SphereEncoder, Config
 from torchvision.utils import save_image
 import os
 import argparse
+import math
 from PIL import Image
 import torchvision.transforms as transforms
 import torchvision
@@ -84,7 +85,10 @@ def sample(args):
         print("Generating random samples...")
         with torch.no_grad():
             z = torch.randn(args.num_samples, config.latent_dim, device=device)
+            z = torch.randn(args.num_samples, config.latent_dim, device=device)
             v = torch.nn.functional.normalize(z, p=2, dim=1)
+            # Fix: Scale to radius sqrt(L)
+            v = v * math.sqrt(config.latent_dim)
             
             for s in [1, 2, 4]:
                 print(f"Generating with {s} steps...")
