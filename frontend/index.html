@@ -111,16 +111,31 @@
 
     <div class="controls">
       <div style="display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
-        <button id="uploadBtn">Upload Image</button>
+        <div style="display: flex; gap: 0.5rem;">
+          <button id="uploadBtn">Upload Image</button>
+          <button id="reconstructBtn" disabled>Reconstruct</button>
+        </div>
         <div id="encTime" style="font-size: 0.75rem; color: #64748b; height: 1rem;"></div>
       </div>
       <div style="display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
         <div style="display: flex; gap: 1rem; align-items: center;">
-          <button id="sampleBtn" disabled>Sample</button>
+          <button id="sampleBtn" disabled>Random</button>
           <label
             style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: #94a3b8; cursor: pointer;">
             <input type="checkbox" id="loopToggle"> Loop
           </label>
+          <label
+            style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: #94a3b8; cursor: pointer; margin-left: 1rem; border-left: 1px solid #334155; padding-left: 1rem;">
+            <input type="checkbox" id="roamToggle"> Roam
+          </label>
+          <div style="display: flex; flex-direction: column; align-items: flex-start;">
+            <span style="font-size: 0.7rem; color: #64748b;">Length</span>
+            <input type="range" id="lengthSlider" min="0" max="0.5" step="0.001" value="0.1" style="width: 80px;">
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: flex-start;">
+            <span style="font-size: 0.7rem; color: #64748b;">Speed</span>
+            <input type="range" id="speedSlider" min="0" max="5.0" step="0.1" value="1.0" style="width: 80px;">
+          </div>
         </div>
         <div id="genTime" style="font-size: 0.75rem; color: #64748b; height: 1rem;"></div>
       </div>

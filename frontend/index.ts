@@ -10,8 +10,12 @@ const inputCanvas = document.getElementById('inputCanvas') as HTMLCanvasElement;
 const outputCanvas = document.getElementById('outputCanvas') as HTMLCanvasElement;
 const sampleBtn = document.getElementById('sampleBtn') as HTMLButtonElement;
 const uploadBtn = document.getElementById('uploadBtn') as HTMLButtonElement;
+const reconstructBtn = document.getElementById('reconstructBtn') as HTMLButtonElement;
 const fileInput = document.getElementById('fileInput') as HTMLInputElement;
 const loopToggle = document.getElementById('loopToggle') as HTMLInputElement;
+const roamToggle = document.getElementById('roamToggle') as HTMLInputElement;
+const lengthSlider = document.getElementById('lengthSlider') as HTMLInputElement;
+const speedSlider = document.getElementById('speedSlider') as HTMLInputElement;
 const genTimeEl = document.getElementById('genTime') as HTMLDivElement;
 const encTimeEl = document.getElementById('encTime') as HTMLDivElement;
 const statusEl = document.getElementById('status') as HTMLDivElement;
@@ -52,8 +56,13 @@ let cornerLatents: Float32Array[] = [
 ];
 
 let isLooping = false;
+let isRoaming = false;
 let sessionBusy = false;
 let pendingInterpolation = false;
+
+let sourceLatent: Float32Array | null = null;
+let orbitA = new Float32Array(LATENT_DIM);
+let orbitB = new Float32Array(LATENT_DIM);
 
 let currentCornerIndices = [-1, -1, -1, -1];
 
@@ -78,6 +87,7 @@ async function init() {
         decoderSession = await ort.InferenceSession.create('/model/decoder.onnx', sessionOptions);
         statusEl.textContent = 'Models loaded! Ready.';
         sampleBtn.disabled = false;
+        reconstructBtn.disabled = false;
 
         // Setup interpolation
         await setupInterpolationCorners();
@@ -120,6 +130,46 @@ function getTensorFromCanvas(ctx: CanvasRenderingContext2D): ort.Tensor {
     return new ort.Tensor('float32', data, [1, 3, IMAGE_SIZE, IMAGE_SIZE]);
 }
 
+function setSourceLatent(data: Float32Array) {
+    // CLONE the data so ONNX doesn't overwrite it
+    sourceLatent = new Float32Array(data);
+
+    // Pick two random unit vectors for the orbit plane
+    const radius = Math.sqrt(LATENT_DIM);
+    for (let i = 0; i < LATENT_DIM; i++) {
+        const u1 = Math.max(1e-10, Math.random());
+        const u2 = Math.random();
+        orbitA[i] = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+
+        const v1 = Math.max(1e-10, Math.random());
+        const v2 = Math.random();
+        orbitB[i] = Math.sqrt(-2.0 * Math.log(v1)) * Math.cos(2.0 * Math.PI * v2);
+    }
+
+    // Gram-Schmidt to make them orthogonal to each other and optionally the source (not strictly necessary but nicer)
+    let dotA = 0, dotB = 0, dotAB = 0;
+    for (let i = 0; i < LATENT_DIM; i++) {
+        dotA += orbitA[i] * orbitA[i];
+        dotB += orbitB[i] * orbitB[i];
+        dotAB += orbitA[i] * orbitB[i];
+    }
+    const normA = Math.sqrt(dotA);
+    for (let i = 0; i < LATENT_DIM; i++) orbitA[i] /= normA;
+
+    // Project A out of B
+    for (let i = 0; i < LATENT_DIM; i++) orbitB[i] -= dotAB / dotA * orbitA[i];
+    let dotB2 = 0;
+    for (let i = 0; i < LATENT_DIM; i++) dotB2 += orbitB[i] * orbitB[i];
+    const normB = Math.sqrt(dotB2);
+    for (let i = 0; i < LATENT_DIM; i++) orbitB[i] /= normB;
+
+    // Rescale to latent radius
+    for (let i = 0; i < LATENT_DIM; i++) {
+        orbitA[i] *= radius;
+        orbitB[i] *= radius;
+    }
+}
+
 async function runInference(inputData: Float32Array | null = null) {
     if (!encoderSession || !decoderSession || sessionBusy) return;
 
@@ -136,14 +186,15 @@ async function runInference(inputData: Float32Array | null = null) {
             const encEnd = performance.now();
             encTimeEl.textContent = `${(encEnd - encStart).toFixed(1)} ms`;
             latent = encoderResults.latent;
+            setSourceLatent(latent.data as Float32Array);
         } else {
-            // Sampling mode: Random noise normalized to sphere
+            // Random mode: Sampling mode
             encTimeEl.textContent = ''; // Clear encoding time for sampling
             const noise = new Float32Array(LATENT_DIM);
             let sumSq = 0;
             for (let i = 0; i < LATENT_DIM; i++) {
                 // Box-Muller for N(0,1)
-                const u1 = Math.random();
+                const u1 = Math.max(1e-10, Math.random());
                 const u2 = Math.random();
                 const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
                 noise[i] = z0;
@@ -155,6 +206,7 @@ async function runInference(inputData: Float32Array | null = null) {
                 noise[i] = (noise[i] / norm) * radius;
             }
             latent = new ort.Tensor('float32', noise, [1, LATENT_DIM]);
+            setSourceLatent(noise); // Save random latent as source
         }
 
         const decoderResults = await decoderSession.run({ latent: latent });
@@ -177,14 +229,77 @@ async function loop() {
     requestAnimationFrame(loop);
 }
 
+async function roamLoop() {
+    if (!isRoaming) return;
+
+    if (!sourceLatent || !decoderSession || sessionBusy) {
+        requestAnimationFrame(roamLoop);
+        return;
+    }
+
+    sessionBusy = true;
+    try {
+        const time = performance.now() * 0.001;
+        const length = parseFloat(lengthSlider.value); // This is now 'max deviation'
+        const speed = parseFloat(speedSlider.value);
+
+        const angle = time * speed;
+        const morphed = new Float32Array(LATENT_DIM);
+        let sumSq = 0;
+
+        // Spherical Orbit Logic:
+        // We move in a circle on the hyper-sphere surface.
+        // Mixing source latent with two orthogonal vectors.
+        const cosL = Math.cos(length);
+        const sinL = Math.sin(length);
+        const cosA = Math.cos(angle);
+        const sinA = Math.sin(angle);
+
+        const radius = Math.sqrt(LATENT_DIM);
+
+        for (let i = 0; i < LATENT_DIM; i++) {
+            // Structured geometric interpolation
+            // morphed = source * cos(len) + (orbitA * cos(ang) + orbitB * sin(ang)) * sin(len)
+            const val = sourceLatent[i] * cosL + (orbitA[i] * cosA + orbitB[i] * sinA) * sinL;
+            morphed[i] = val;
+            sumSq += val * val;
+        }
+
+        // Renormalize to sphere radius sqrt(L) to be safe
+        const norm = Math.sqrt(sumSq);
+        for (let i = 0; i < LATENT_DIM; i++) {
+            morphed[i] = (morphed[i] / norm) * radius;
+        }
+
+        const latentTensor = new ort.Tensor('float32', morphed, [1, LATENT_DIM]);
+        const decoderResults = await decoderSession.run({ latent: latentTensor });
+        drawToCanvas(outputCtx, decoderResults.output.data as Float32Array);
+    } finally {
+        sessionBusy = false;
+        requestAnimationFrame(roamLoop);
+    }
+}
+
 sampleBtn.addEventListener('click', () => {
     runInference();
+});
+
+reconstructBtn.addEventListener('click', () => {
+    const tensor = getTensorFromCanvas(inputCtx);
+    runInference(tensor.data as Float32Array);
 });
 
 loopToggle.addEventListener('change', () => {
     isLooping = loopToggle.checked;
     if (isLooping) {
         loop();
+    }
+});
+
+roamToggle.addEventListener('change', () => {
+    isRoaming = roamToggle.checked;
+    if (isRoaming) {
+        roamLoop();
     }
 });
 
