@@ -116,6 +116,8 @@ def infer_config(dataset, args):
     config.batch_size = args.batch_size
     config.epochs = args.epochs
     config.iterations_per_epoch = args.steps
+    config.eval_frequency = args.eval_frequency
+    config.checkpoint_frequency = args.checkpoint_frequency
     
     dataset_name = os.path.basename(args.dataset).replace('.', '')
     
@@ -253,15 +255,21 @@ def train(args):
         print(f"Epoch [{epoch+1}/{config.epochs}] Loss: {running_loss/config.iterations_per_epoch:.4f}")
         
         # Save Checkpoint
-        torch.save({
-            'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'epoch': epoch + 1,
-            'config': config.__dict__ # Save config for sampling!
-        }, os.path.join(config.checkpoint_dir, "checkpoint_latest.pth"))
+        if (epoch + 1) % config.checkpoint_frequency == 0 or (epoch + 1) == config.epochs:
+            checkpoint_data = {
+                'state_dict': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'epoch': epoch + 1,
+                'config': config.__dict__ # Save config for sampling!
+            }
+            # Save latest for resume
+            torch.save(checkpoint_data, os.path.join(config.checkpoint_dir, "checkpoint_latest.pth"))
+            # Save periodic for history
+            torch.save(checkpoint_data, os.path.join(config.checkpoint_dir, f"checkpoint_epoch_{epoch+1}.pth"))
+            print(f"  Saved checkpoint at epoch {epoch+1}")
         
         # Sample (1, 2, 4 steps)
-        if (epoch + 1) % 1 == 0:
+        if (epoch + 1) % config.eval_frequency == 0 or (epoch + 1) == config.epochs:
             with torch.no_grad():
                 model.eval()
                 # Reconstruction
@@ -287,6 +295,8 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--epochs', type=int, default=250, help='Total number of epochs')
     parser.add_argument('--steps', type=int, default=100, help='Steps (iterations) per epoch')
+    parser.add_argument('--eval-frequency', type=int, default=100, help='Evaluation frequency (in epochs)')
+    parser.add_argument('--checkpoint-frequency', type=int, default=100, help='Checkpoint frequency (in epochs)')
     
     # Resume flag: Default True
     # We use a trick: --resume defaults to True. --no-resume sets it to False.

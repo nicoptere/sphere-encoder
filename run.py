@@ -22,7 +22,10 @@ def main():
         "--batch_size", "256",
         "--epochs", "1000",
         "--steps", "200", # Approx 1 epoch of CIFAR-10
-        "--no-resume" # Start fresh because model architecture/dim changed
+        "--no-resume", # Start fresh because model architecture/dim changed
+        # Add eval and checkpoint frequency (epochs)
+        "--eval-frequency", "100",
+        "--checkpoint-frequency", "100"
     ]
     
     cmd = [
@@ -30,9 +33,15 @@ def main():
         "--dataset", "flowers102",
         "--batch_size", "64",
         "--epochs", "1000",
-        "--steps", "128", # Approx 1 epoch of flowers102
+        "--steps", "128", # Approx 1 epoch of flowers102 (8200 images)
+        
+        # Add eval and checkpoint frequency (epochs)
+        "--eval-frequency", "50",
+        "--checkpoint-frequency", "100",
         "--no-resume" # Start fresh because model architecture/dim changed
     ]
+
+
     print(f"Starting Optimal Training Run...")
     print(f"Command: {' '.join(cmd)}")
     
