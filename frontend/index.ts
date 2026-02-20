@@ -260,7 +260,8 @@ async function runRoamFrame() {
     if (!sourceLatent || !decoderSession) return;
     sessionBusy = true;
     try {
-        const time = performance.now() * 0.001;
+        const startTime = performance.now();
+        const time = startTime * 0.001;
         const length = parseFloat(lengthSlider.value);
         const speed = parseFloat(speedSlider.value);
 
@@ -287,6 +288,10 @@ async function runRoamFrame() {
 
         const latentTensor = new ort.Tensor('float32', morphed, [1, LATENT_DIM]);
         const decoderResults = await decoderSession.run({ latent: latentTensor });
+
+        const endTime = performance.now();
+        genTimeEl.textContent = `${(endTime - startTime).toFixed(1)} ms`;
+
         drawToCanvas(outputCtx, decoderResults.output.data as Float32Array);
     } finally {
         sessionBusy = false;
