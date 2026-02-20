@@ -11,23 +11,21 @@ const outputCanvas = document.getElementById('outputCanvas') as HTMLCanvasElemen
 const sampleBtn = document.getElementById('sampleBtn') as HTMLButtonElement;
 const uploadBtn = document.getElementById('uploadBtn') as HTMLButtonElement;
 const fileInput = document.getElementById('fileInput') as HTMLInputElement;
+const loopToggle = document.getElementById('loopToggle') as HTMLInputElement;
+const genTimeEl = document.getElementById('genTime') as HTMLDivElement;
 const statusEl = document.getElementById('status') as HTMLDivElement;
 
 const inputCtx = inputCanvas.getContext('2d')!;
 const outputCtx = outputCanvas.getContext('2d')!;
 
+let isLooping = false;
+
 // Configure ONNX wasm paths
 ort.env.wasm.wasmPaths = {
-    'ort-wasm-simd-threaded.mjs': '/ort-assets/ort-wasm-simd-threaded.js',
-    'ort-wasm-simd-threaded.jsep.mjs': '/ort-assets/ort-wasm-simd-threaded.jsep.js',
-    'ort-wasm-simd-threaded.asyncify.mjs': '/ort-assets/ort-wasm-simd-threaded.asyncify.js',
-    'ort-wasm-simd-threaded.jspi.mjs': '/ort-assets/ort-wasm-simd-threaded.jspi.js',
-    'ort-wasm-simd-threaded.wasm': '/ort-assets/ort-wasm-simd-threaded.wasm',
     'ort-wasm-simd-threaded.jsep.wasm': '/ort-assets/ort-wasm-simd-threaded.jsep.wasm',
-    'ort-wasm-simd-threaded.asyncify.wasm': '/ort-assets/ort-wasm-simd-threaded.asyncify.wasm',
-    'ort-wasm-simd-threaded.jspi.wasm': '/ort-assets/ort-wasm-simd-threaded.jspi.wasm',
-    'ort-wasm.wasm': '/ort-assets/ort-wasm.wasm',
-    'ort-wasm-simd.wasm': '/ort-assets/ort-wasm-simd.wasm',
+    'ort-wasm-simd-threaded.jsep.js': '/ort-assets/ort-wasm-simd-threaded.jsep.js',
+    'ort-wasm-simd-threaded.wasm': '/ort-assets/ort-wasm-simd-threaded.wasm',
+    'ort-wasm-simd-threaded.js': '/ort-assets/ort-wasm-simd-threaded.js',
 };
 ort.env.wasm.proxy = true;
 ort.env.wasm.numThreads = 1;
@@ -36,8 +34,11 @@ async function init() {
     try {
         statusEl.textContent = 'Loading models...';
         // Path relative to public folder in Vite
-        encoderSession = await ort.InferenceSession.create('/model/encoder.onnx');
-        decoderSession = await ort.InferenceSession.create('/model/decoder.onnx');
+        const sessionOptions: ort.InferenceSession.SessionOptions = {
+            executionProviders: ['webgpu', 'wasm'],
+        };
+        encoderSession = await ort.InferenceSession.create('/model/encoder.onnx', sessionOptions);
+        decoderSession = await ort.InferenceSession.create('/model/decoder.onnx', sessionOptions);
         statusEl.textContent = 'Models loaded! Ready.';
         sampleBtn.disabled = false;
     } catch (e) {
@@ -82,6 +83,7 @@ function getTensorFromCanvas(ctx: CanvasRenderingContext2D): ort.Tensor {
 async function runInference(inputData: Float32Array | null = null) {
     if (!encoderSession || !decoderSession) return;
 
+    const startTime = performance.now();
     let latent: ort.Tensor;
 
     if (inputData) {
@@ -94,7 +96,6 @@ async function runInference(inputData: Float32Array | null = null) {
         const noise = new Float32Array(LATENT_DIM);
         let sumSq = 0;
         for (let i = 0; i < LATENT_DIM; i++) {
-            noise[i] = Math.random() * 2 - 1; // Simplistic random, N(0,1) would be better
             // Box-Muller for N(0,1)
             const u1 = Math.random();
             const u2 = Math.random();
@@ -113,11 +114,29 @@ async function runInference(inputData: Float32Array | null = null) {
     const decoderResults = await decoderSession.run({ latent: latent });
     const output = decoderResults.output.data as Float32Array;
 
+    const endTime = performance.now();
+    genTimeEl.textContent = `${(endTime - startTime).toFixed(1)} ms`;
+
     drawToCanvas(outputCtx, output);
+}
+
+async function loop() {
+    if (!isLooping) return;
+    await runInference();
+    // Use requestAnimationFrame for smooth looping or just a microtask if we want "as fast as possible"
+    // requestAnimationFrame is better for browser responsiveness
+    requestAnimationFrame(loop);
 }
 
 sampleBtn.addEventListener('click', () => {
     runInference();
+});
+
+loopToggle.addEventListener('change', () => {
+    isLooping = loopToggle.checked;
+    if (isLooping) {
+        loop();
+    }
 });
 
 uploadBtn.addEventListener('click', () => fileInput.click());
