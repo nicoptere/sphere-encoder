@@ -66,6 +66,11 @@ let orbitB = new Float32Array(LATENT_DIM);
 
 let currentCornerIndices = [-1, -1, -1, -1];
 
+let targetInterpX = 0.5;
+let targetInterpY = 0.5;
+let currentInterpX = 0.5;
+let currentInterpY = 0.5;
+
 // Configure ONNX wasm paths
 ort.env.wasm.wasmPaths = {
     'ort-wasm-simd-threaded.jsep.wasm': '/ort-assets/ort-wasm-simd-threaded.jsep.wasm',
@@ -188,12 +193,11 @@ async function runInference(inputData: Float32Array | null = null) {
             latent = encoderResults.latent;
             setSourceLatent(latent.data as Float32Array);
         } else {
-            // Random mode: Sampling mode
-            encTimeEl.textContent = ''; // Clear encoding time for sampling
+            // Random mode
+            encTimeEl.textContent = '';
             const noise = new Float32Array(LATENT_DIM);
             let sumSq = 0;
             for (let i = 0; i < LATENT_DIM; i++) {
-                // Box-Muller for N(0,1)
                 const u1 = Math.max(1e-10, Math.random());
                 const u2 = Math.random();
                 const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
@@ -206,7 +210,7 @@ async function runInference(inputData: Float32Array | null = null) {
                 noise[i] = (noise[i] / norm) * radius;
             }
             latent = new ort.Tensor('float32', noise, [1, LATENT_DIM]);
-            setSourceLatent(noise); // Save random latent as source
+            setSourceLatent(noise);
         }
 
         const decoderResults = await decoderSession.run({ latent: latent });
@@ -216,56 +220,66 @@ async function runInference(inputData: Float32Array | null = null) {
         genTimeEl.textContent = `${(endTime - startTime).toFixed(1)} ms`;
 
         drawToCanvas(outputCtx, output);
+    } catch (e) {
+        console.error("Inference error:", e);
     } finally {
         sessionBusy = false;
     }
 }
 
-async function loop() {
-    if (!isLooping) return;
-    await runInference();
-    // Use requestAnimationFrame for smooth looping or just a microtask if we want "as fast as possible"
-    // requestAnimationFrame is better for browser responsiveness
-    requestAnimationFrame(loop);
-}
+// Consolidating all loops into one master loop
+async function masterLoop() {
+    // 1. Easing for Interpolation Pad
+    const dx = targetInterpX - currentInterpX;
+    const dy = targetInterpY - currentInterpY;
+    const interpMoved = Math.abs(dx) > 0.0001 || Math.abs(dy) > 0.0001;
 
-async function roamLoop() {
-    if (!isRoaming) return;
-
-    if (!sourceLatent || !decoderSession || sessionBusy) {
-        requestAnimationFrame(roamLoop);
-        return;
+    if (interpMoved) {
+        currentInterpX += dx * 0.1;
+        currentInterpY += dy * 0.1;
+        interpCursor.style.left = `${currentInterpX * 100}%`;
+        interpCursor.style.top = `${currentInterpY * 100}%`;
     }
 
+    // 2. Decide what to infer (Prioritize: Interpolation > Roaming > Loop)
+    if (!sessionBusy && decoderSession) {
+        if (interpMoved || pendingInterpolation) {
+            pendingInterpolation = false;
+            await runInterpolationUpdate();
+        } else if (isRoaming && sourceLatent) {
+            await runRoamFrame();
+        } else if (isLooping) {
+            await runInference();
+        }
+    }
+
+    requestAnimationFrame(masterLoop);
+}
+
+async function runRoamFrame() {
+    if (!sourceLatent || !decoderSession) return;
     sessionBusy = true;
     try {
         const time = performance.now() * 0.001;
-        const length = parseFloat(lengthSlider.value); // This is now 'max deviation'
+        const length = parseFloat(lengthSlider.value);
         const speed = parseFloat(speedSlider.value);
 
         const angle = time * speed;
         const morphed = new Float32Array(LATENT_DIM);
         let sumSq = 0;
 
-        // Spherical Orbit Logic:
-        // We move in a circle on the hyper-sphere surface.
-        // Mixing source latent with two orthogonal vectors.
         const cosL = Math.cos(length);
         const sinL = Math.sin(length);
         const cosA = Math.cos(angle);
         const sinA = Math.sin(angle);
-
         const radius = Math.sqrt(LATENT_DIM);
 
         for (let i = 0; i < LATENT_DIM; i++) {
-            // Structured geometric interpolation
-            // morphed = source * cos(len) + (orbitA * cos(ang) + orbitB * sin(ang)) * sin(len)
             const val = sourceLatent[i] * cosL + (orbitA[i] * cosA + orbitB[i] * sinA) * sinL;
             morphed[i] = val;
             sumSq += val * val;
         }
 
-        // Renormalize to sphere radius sqrt(L) to be safe
         const norm = Math.sqrt(sumSq);
         for (let i = 0; i < LATENT_DIM; i++) {
             morphed[i] = (morphed[i] / norm) * radius;
@@ -276,7 +290,35 @@ async function roamLoop() {
         drawToCanvas(outputCtx, decoderResults.output.data as Float32Array);
     } finally {
         sessionBusy = false;
-        requestAnimationFrame(roamLoop);
+    }
+}
+
+async function runInterpolationUpdate() {
+    if (!decoderSession) return;
+    sessionBusy = true;
+    try {
+        const x = currentInterpX;
+        const y = currentInterpY;
+        const interpolated = new Float32Array(LATENT_DIM);
+        let sumSq = 0;
+        for (let i = 0; i < LATENT_DIM; i++) {
+            const top = (1 - x) * cornerLatents[0][i] + x * cornerLatents[1][i];
+            const bottom = (1 - x) * cornerLatents[2][i] + x * cornerLatents[3][i];
+            const val = (1 - y) * top + y * bottom;
+            interpolated[i] = val;
+            sumSq += val * val;
+        }
+        const norm = Math.sqrt(sumSq);
+        const radius = Math.sqrt(LATENT_DIM);
+        for (let i = 0; i < LATENT_DIM; i++) {
+            interpolated[i] = (interpolated[i] / norm) * radius;
+        }
+
+        const latent = new ort.Tensor('float32', interpolated, [1, LATENT_DIM]);
+        const decoderResults = await decoderSession.run({ latent: latent });
+        drawToCanvas(interpResultCtx, decoderResults.output.data as Float32Array);
+    } finally {
+        sessionBusy = false;
     }
 }
 
@@ -291,16 +333,10 @@ reconstructBtn.addEventListener('click', () => {
 
 loopToggle.addEventListener('change', () => {
     isLooping = loopToggle.checked;
-    if (isLooping) {
-        loop();
-    }
 });
 
 roamToggle.addEventListener('change', () => {
     isRoaming = roamToggle.checked;
-    if (isRoaming) {
-        roamLoop();
-    }
 });
 
 uploadBtn.addEventListener('click', () => fileInput.click());
@@ -362,7 +398,7 @@ async function randomizeCorner(i: number) {
         console.error(`Failed to randomize corner ${i}:`, e);
     } finally {
         sessionBusy = false;
-        updateInterpolation();
+        pendingInterpolation = true;
     }
 }
 
@@ -379,53 +415,7 @@ async function setupInterpolationCorners() {
     } finally {
         sessionBusy = false;
         statusEl.textContent = 'Models loaded! Ready.';
-        updateInterpolation();
-    }
-}
-
-async function updateInterpolation() {
-    if (!decoderSession) return;
-    if (sessionBusy) {
-        pendingInterpolation = true;
-        return;
-    }
-
-    sessionBusy = true;
-    try {
-        const px = (parseFloat(interpCursor.style.left) || 50) / 100;
-        const py = (parseFloat(interpCursor.style.top) || 50) / 100;
-
-        const x = px;
-        const y = py;
-
-        const interpolated = new Float32Array(LATENT_DIM);
-        let sumSq = 0;
-        for (let i = 0; i < LATENT_DIM; i++) {
-            // Bilinear interpolation
-            const top = (1 - x) * cornerLatents[0][i] + x * cornerLatents[1][i];
-            const bottom = (1 - x) * cornerLatents[2][i] + x * cornerLatents[3][i];
-            const val = (1 - y) * top + y * bottom;
-            interpolated[i] = val;
-            sumSq += val * val;
-        }
-
-        // Renormalize to sphere radius sqrt(L)
-        const norm = Math.sqrt(sumSq);
-        const radius = Math.sqrt(LATENT_DIM);
-        for (let i = 0; i < LATENT_DIM; i++) {
-            interpolated[i] = (interpolated[i] / norm) * radius;
-        }
-
-        const latent = new ort.Tensor('float32', interpolated, [1, LATENT_DIM]);
-        const decoderResults = await decoderSession.run({ latent: latent });
-        const output = decoderResults.output.data as Float32Array;
-        drawToCanvas(interpResultCtx, output);
-    } finally {
-        sessionBusy = false;
-        if (pendingInterpolation) {
-            pendingInterpolation = false;
-            updateInterpolation();
-        }
+        masterLoop(); // Start the master loop
     }
 }
 
@@ -434,11 +424,11 @@ function handlePadInteraction(e: MouseEvent | TouchEvent) {
     let clientX, clientY;
 
     if ('touches' in e) {
-        clientX = e.touches[0].clientX;
-        clientY = e.touches[0].clientY;
+        clientX = (e as TouchEvent).touches[0].clientX;
+        clientY = (e as TouchEvent).touches[0].clientY;
     } else {
-        clientX = e.clientX;
-        clientY = e.clientY;
+        clientX = (e as MouseEvent).clientX;
+        clientY = (e as MouseEvent).clientY;
     }
 
     let x = (clientX - rect.left) / rect.width;
@@ -448,10 +438,8 @@ function handlePadInteraction(e: MouseEvent | TouchEvent) {
     x = Math.max(0, Math.min(1, x));
     y = Math.max(0, Math.min(1, y));
 
-    interpCursor.style.left = `${x * 100}%`;
-    interpCursor.style.top = `${y * 100}%`;
-
-    updateInterpolation();
+    targetInterpX = x;
+    targetInterpY = y;
 }
 
 interpPad.addEventListener('mousedown', (e) => {
