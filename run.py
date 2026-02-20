@@ -25,6 +25,14 @@ def main():
         "--no-resume" # Start fresh because model architecture/dim changed
     ]
     
+    cmd = [
+        sys.executable, "training.py",
+        "--dataset", "flowers102",
+        "--batch_size", "64",
+        "--epochs", "1000",
+        "--steps", "128", # Approx 1 epoch of flowers102
+        "--no-resume" # Start fresh because model architecture/dim changed
+    ]
     print(f"Starting Optimal Training Run...")
     print(f"Command: {' '.join(cmd)}")
     
