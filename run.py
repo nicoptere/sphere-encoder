@@ -37,7 +37,7 @@ def main():
         
         # Add eval and checkpoint frequency (epochs)
         "--eval-frequency", "50",
-        "--checkpoint-frequency", "100",
+        "--checkpoint-frequency", "50",
         "--no-resume" # Start fresh because model architecture/dim changed
     ]
 
