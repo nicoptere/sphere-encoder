@@ -124,6 +124,55 @@
       <input type="file" id="fileInput" accept="image/*">
     </div>
     <div id="status" style="text-align: center; color: #3b82f6;">Loading models...</div>
+
+    <hr style="border: 0; border-top: 1px solid #334155; margin: 1rem 0;">
+
+    <div class="interpolation-container"
+      style="display: flex; gap: 3rem; align-items: center; justify-content: center; flex-wrap: wrap;">
+      <div
+        style="position: relative; width: 384px; height: 384px; display: flex; flex-direction: column; justify-content: space-between;">
+        <div style="display: flex; justify-content: space-between;">
+          <div>
+            <div class="label" style="margin-bottom: 2px;">TL</div><canvas id="corner-tl" width="32" height="32"
+              style="width: 64px; height: 64px; border-radius: 4px; background: #1e293b;"></canvas>
+          </div>
+          <div>
+            <div class="label" style="margin-bottom: 2px;">TR</div><canvas id="corner-tr" width="32" height="32"
+              style="width: 64px; height: 64px; border-radius: 4px; background: #1e293b;"></canvas>
+          </div>
+        </div>
+
+        <div id="interpPad"
+          style="position: absolute; left: 64px; top: 64px; width: 256px; height: 256px; background: #1e293b; border: 1px solid #3b82f6; border-radius: 8px; cursor: crosshair; overflow: hidden;">
+          <div id="interpCursor"
+            style="position: absolute; width: 12px; height: 12px; background: #3b82f6; border: 2px solid white; border-radius: 50%; pointer-events: none; transform: translate(-50%, -50%); left: 50%; top: 50%; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);">
+          </div>
+          <div
+            style="position: absolute; width: 100%; height: 100%; pointer-events: none; opacity: 0.1; background-image: radial-gradient(#3b82f6 1px, transparent 1px); background-size: 16px 16px;">
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between;">
+          <div><canvas id="corner-bl" width="32" height="32"
+              style="width: 64px; height: 64px; border-radius: 4px; background: #1e293b;"></canvas>
+            <div class="label" style="margin-top: 2px;">BL</div>
+          </div>
+          <div><canvas id="corner-br" width="32" height="32"
+              style="width: 64px; height: 64px; border-radius: 4px; background: #1e293b;"></canvas>
+            <div class="label" style="margin-top: 2px;">BR</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 1rem;">
+        <div class="label">Latent Interpolation</div>
+        <canvas id="interpResult" width="32" height="32"
+          style="width: 256px; height: 256px; background: #1e293b; border-radius: 8px; border: 1px solid #334155; image-rendering: pixelated;"></canvas>
+        <button id="randomizeInterp"
+          style="padding: 0.5rem 1rem; font-size: 0.75rem; background: #1e293b; border: 1px solid #334155;">Randomize
+          Corners</button>
+      </div>
+    </div>
   </div>
   <script type="module" src="/index.ts"></script>
 </body>
