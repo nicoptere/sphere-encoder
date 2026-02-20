@@ -13,6 +13,7 @@ const uploadBtn = document.getElementById('uploadBtn') as HTMLButtonElement;
 const fileInput = document.getElementById('fileInput') as HTMLInputElement;
 const loopToggle = document.getElementById('loopToggle') as HTMLInputElement;
 const genTimeEl = document.getElementById('genTime') as HTMLDivElement;
+const encTimeEl = document.getElementById('encTime') as HTMLDivElement;
 const statusEl = document.getElementById('status') as HTMLDivElement;
 
 const cornerTL = document.getElementById('corner-tl') as HTMLCanvasElement;
@@ -53,6 +54,8 @@ let cornerLatents: Float32Array[] = [
 let isLooping = false;
 let sessionBusy = false;
 let pendingInterpolation = false;
+
+let currentCornerIndices = [-1, -1, -1, -1];
 
 // Configure ONNX wasm paths
 ort.env.wasm.wasmPaths = {
@@ -128,10 +131,14 @@ async function runInference(inputData: Float32Array | null = null) {
         if (inputData) {
             // Reconstruction mode
             const inputTensor = new ort.Tensor('float32', inputData, [1, 3, IMAGE_SIZE, IMAGE_SIZE]);
+            const encStart = performance.now();
             const encoderResults = await encoderSession.run({ input: inputTensor });
+            const encEnd = performance.now();
+            encTimeEl.textContent = `${(encEnd - encStart).toFixed(1)} ms`;
             latent = encoderResults.latent;
         } else {
             // Sampling mode: Random noise normalized to sphere
+            encTimeEl.textContent = ''; // Clear encoding time for sampling
             const noise = new Float32Array(LATENT_DIM);
             let sumSq = 0;
             for (let i = 0; i < LATENT_DIM; i++) {
@@ -200,20 +207,30 @@ init();
 
 // --- Interpolation Logic ---
 
-async function fetchRandomFlowerImage(): Promise<HTMLImageElement> {
-    const idx = Math.floor(Math.random() * 10) + 1;
+async function fetchRandomFlowerImage(exclude: number[] = []): Promise<{ img: HTMLImageElement, idx: number }> {
+    let idx: number;
+    let attempts = 0;
+    do {
+        idx = Math.floor(Math.random() * 10) + 1;
+        attempts++;
+    } while (exclude.includes(idx) && attempts < 100);
+
     const url = `/images/flower (${idx}).jpg`;
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.crossOrigin = "anonymous";
-        img.onload = () => resolve(img);
+        img.onload = () => resolve({ img, idx });
         img.onerror = (e) => reject(e);
         img.src = url;
     });
 }
 
 async function fetchAndEncodeCorner(i: number) {
-    const img = await fetchRandomFlowerImage();
+    // Exclude other corners to ensure uniqueness
+    const exclude = currentCornerIndices.filter((_, index) => index !== i);
+    const { img, idx } = await fetchRandomFlowerImage(exclude);
+    currentCornerIndices[i] = idx;
+
     const ctx = cornerCtxs[i];
     drawImageCenterCrop(ctx, img);
     const tensor = getTensorFromCanvas(ctx);
