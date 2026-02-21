@@ -4,208 +4,136 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sphere Encoder Web</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background: #0f172a;
-      color: #f8fafc;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      min-height: 100vh;
-      padding: 2rem;
-      user-select: none;
-      -webkit-user-select: none;
-      -moz-user-select: none;
-      -ms-user-select: none;
-    }
-
-    .container {
-      max-width: 800px;
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      gap: 2rem;
-    }
-
-    .canvas-group {
-      display: flex;
-      gap: 1rem;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-
-    canvas {
-      background: #1e293b;
-      border-radius: 8px;
-      border: 1px solid #334155;
-    }
-
-    .controls {
-      display: flex;
-      gap: 1rem;
-      justify-content: center;
-    }
-
-    button {
-      background: #3b82f6;
-      color: white;
-      border: none;
-      padding: 0.75rem 1.5rem;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: 600;
-      transition: background 0.2s;
-    }
-
-    button:hover {
-      background: #2563eb;
-    }
-
-    button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    input[type="file"] {
-      display: none;
-    }
-
-    .label {
-      font-size: 0.875rem;
-      color: #94a3b8;
-      margin-bottom: 0.5rem;
-      text-align: center;
-    }
-
-    h1 {
-      margin-bottom: 0.5rem;
-      text-align: center;
-    }
-
-    p {
-      color: #94a3b8;
-      text-align: center;
-      margin-bottom: 1rem;
-    }
-  </style>
+  <title>Sphere Encoder Web - Pure WebGPU</title>
 </head>
 
 <body>
   <div class="container">
-
-    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-      <div style="flex: 1;"></div>
-      <div style="flex: 2; text-align: center;">
+    <header class="header">
+      <div class="title-group">
         <h1>Sphere Encoder</h1>
-        <p>In-browser inference using ONNX Runtime</p>
+        <p>In-browser inference using Pure WebGPU</p>
       </div>
-      <div style="flex: 1; text-align: right;">
-        <label for="modelSelect"
-          style="font-size: 0.75rem; color: #94a3b8; display: block; margin-bottom: 0.25rem;">Select Model</label>
-        <select id="modelSelect"
-          style="background: #1e293b; color: white; border: 1px solid #334155; padding: 0.5rem; border-radius: 4px; font-size: 0.875rem; cursor: pointer;">
-          <option value="ffhq_64" selected>FFHQ (64x64)</option>
-          <option value="cifar10">CIFAR-10 (32x32)</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="canvas-group">
-      <div>
-        <canvas id="inputCanvas" width="32" height="32"
-          style="width: 256px; height: 256px; image-rendering: pixelated;"></canvas>
-      </div>
-      <div>
-        <canvas id="outputCanvas" width="32" height="32"
-          style="width: 256px; height: 256px; image-rendering: pixelated;"></canvas>
-      </div>
-    </div>
-
-    <div class="controls">
-      <div style="display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
-        <div style="display: flex; gap: 0.5rem;">
-          <button id="uploadBtn">Upload Image</button>
-          <button id="reconstructBtn" disabled>Reconstruct</button>
+      <div class="selectors">
+        <div class="selector-item">
+          <label for="modelSelect">Model</label>
+          <select id="modelSelect">
+            <option value="ffhq_64">FFHQ (64x64)</option>
+            <option value="cifar10" selected>CIFAR-10 (32x32)</option>
+          </select>
         </div>
-        <div id="encTime" style="font-size: 0.75rem; color: #64748b; height: 1rem;"></div>
+        <div class="selector-item">
+          <label for="quantSelect">Quantization</label>
+          <select id="quantSelect">
+            <option value="f32">FP32 (Original)</option>
+            <option value="f16">FP16 (Half)</option>
+            <option value="q8" selected>INT8 (8-bit)</option>
+            <option value="q4">INT4 (4-bit)</option>
+          </select>
+        </div>
       </div>
-      <div style="display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
-        <div style="display: flex; gap: 1rem; align-items: center;">
-          <button id="sampleBtn" disabled>Random</button>
-          <label
-            style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: #94a3b8; cursor: pointer;">
-            <input type="checkbox" id="loopToggle"> Loop
-          </label>
-          <label
-            style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: #94a3b8; cursor: pointer; margin-left: 1rem; border-left: 1px solid #334155; padding-left: 1rem;">
-            <input type="checkbox" id="roamToggle"> Roam
-          </label>
-          <div style="display: flex; flex-direction: column; align-items: flex-start;">
-            <span style="font-size: 0.7rem; color: #64748b;">Length</span>
-            <input type="range" id="lengthSlider" min="0" max="0.5" step="0.001" value="0.1" style="width: 80px;">
+      <div class="status-container">
+        <div id="throbber" class="throbber"></div>
+        <div id="status">Loading models...</div>
+      </div>
+    </header>
+
+    <div class="separator"></div>
+
+    <section class="controls">
+      <div class="control-row">
+        <div class="button-group">
+          <button id="sampleBtn" disabled>Random Generation</button>
+        </div>
+
+        <div class="toggle-group">
+          <label><input type="checkbox" id="loopToggle"> Loop</label>
+          <label><input type="checkbox" id="roamToggle"> Roam</label>
+        </div>
+
+        <div class="slider-group">
+          <div class="slider-item">
+            <span>Length</span>
+            <input type="range" id="lengthSlider" min="0" max="2.5" step="0.001" value="0.5">
           </div>
-          <div style="display: flex; flex-direction: column; align-items: flex-start;">
-            <span style="font-size: 0.7rem; color: #64748b;">Speed</span>
-            <input type="range" id="speedSlider" min="0" max="5.0" step="0.1" value="1.0" style="width: 80px;">
+          <div class="slider-item">
+            <span>Speed</span>
+            <input type="range" id="speedSlider" min="0" max="10.0" step="0.1" value="2.0">
           </div>
         </div>
-        <div id="genTime" style="font-size: 0.75rem; color: #64748b; height: 1rem;"></div>
       </div>
-      <input type="file" id="fileInput" accept="image/*">
-    </div>
-    <div id="status" style="text-align: center; color: #3b82f6;">Loading models...</div>
 
-    <hr style="border: 0; border-top: 1px solid #334155; margin: 1rem 0;">
+      <div class="canvas-group" style="margin-top: 1rem;">
+        <div class="canvas-item">
+          <div class="canvas-label">Random Reconstruction</div>
+          <canvas id="randomCanvas" width="32" height="32"></canvas>
+          <div id="randomTime" class="timing-label"></div>
+        </div>
+      </div>
+    </section>
 
-    <div class="interpolation-container"
-      style="display: flex; gap: 3rem; align-items: center; justify-content: center; flex-wrap: wrap;">
-      <div
-        style="position: relative; width: 384px; height: 384px; display: flex; flex-direction: column; justify-content: space-between;">
-        <div style="display: flex; justify-content: space-between;">
+    <div class="separator"></div>
+
+    <section class="image-section">
+      <input type="file" id="fileInput" accept="image/*" style="display: none;">
+
+      <main class="canvas-group">
+        <div class="canvas-item">
+          <div class="canvas-label">Samples</div>
+          <div id="thumbnailGrid" class="thumbnail-grid"></div>
+        </div>
+        <div class="canvas-item" id="sourceUploadGroup">
+          <div class="canvas-label">Source (Drag & Drop)</div>
+          <canvas id="inputCanvas" width="32" height="32" class="interactive-canvas"></canvas>
+          <div id="encTime" class="timing-label"></div>
+        </div>
+        <div class="canvas-item">
+          <div class="canvas-label">Reconstruction</div>
+          <canvas id="outputCanvas" width="32" height="32"></canvas>
+          <div id="genTime" class="timing-label"></div>
+        </div>
+      </main>
+    </section>
+
+
+    <hr>
+
+    <section class="interpolation-section">
+      <div class="pad-outer">
+        <div class="row">
           <div>
-            <div class="label" style="margin-bottom: 2px;">TL</div><canvas id="corner-tl" width="32" height="32"
-              style="width: 64px; height: 64px; border-radius: 4px; background: #1e293b;"></canvas>
+            <div class="corner-label">TL</div>
+            <canvas id="corner-tl" width="32" height="32" class="corner-canvas"></canvas>
           </div>
           <div>
-            <div class="label" style="margin-bottom: 2px;">TR</div><canvas id="corner-tr" width="32" height="32"
-              style="width: 64px; height: 64px; border-radius: 4px; background: #1e293b;"></canvas>
+            <div class="corner-label">TR</div>
+            <canvas id="corner-tr" width="32" height="32" class="corner-canvas"></canvas>
           </div>
         </div>
 
-        <div id="interpPad"
-          style="position: absolute; left: 64px; top: 64px; width: 256px; height: 256px; background: #1e293b; border: 1px solid #3b82f6; border-radius: 8px; cursor: crosshair; overflow: hidden;">
-          <div id="interpCursor"
-            style="position: absolute; width: 12px; height: 12px; background: #3b82f6; border: 2px solid white; border-radius: 50%; pointer-events: none; transform: translate(-50%, -50%); left: 50%; top: 50%; box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);">
-          </div>
-          <div
-            style="position: absolute; width: 100%; height: 100%; pointer-events: none; opacity: 0.1; background-image: radial-gradient(#3b82f6 1px, transparent 1px); background-size: 16px 16px;">
-          </div>
+        <div id="interpPad" class="interp-pad">
+          <div id="interpCursor" class="cursor"></div>
+          <div class="grid"></div>
         </div>
 
-        <div style="display: flex; justify-content: space-between;">
-          <div><canvas id="corner-bl" width="32" height="32"
-              style="width: 64px; height: 64px; border-radius: 4px; background: #1e293b;"></canvas>
-            <div class="label" style="margin-top: 2px;">BL</div>
+        <div class="row">
+          <div>
+            <canvas id="corner-bl" width="32" height="32" class="corner-canvas"></canvas>
+            <div class="corner-label">BL</div>
           </div>
-          <div><canvas id="corner-br" width="32" height="32"
-              style="width: 64px; height: 64px; border-radius: 4px; background: #1e293b;"></canvas>
-            <div class="label" style="margin-top: 2px;">BR</div>
+          <div>
+            <canvas id="corner-br" width="32" height="32" class="corner-canvas"></canvas>
+            <div class="corner-label">BR</div>
           </div>
         </div>
       </div>
 
-      <div style="display: flex; flex-direction: column; align-items: center; gap: 1rem;">
-        <div class="label">Latent Interpolation</div>
-        <canvas id="interpResult" width="32" height="32"
-          style="width: 256px; height: 256px; background: #1e293b; border-radius: 8px; border: 1px solid #334155; image-rendering: pixelated;"></canvas>
-        <button id="randomizeInterp"
-          style="padding: 0.5rem 1rem; font-size: 0.75rem; background: #1e293b; border: 1px solid #334155;">Randomize
-          Corners</button>
+      <div class="result-group">
+        <div class="label">Latent Interpolation Result</div>
+        <canvas id="interpResult" width="32" height="32"></canvas>
+        <button id="randomizeInterp" class="secondary">Randomize Corners</button>
       </div>
-    </div>
+    </section>
   </div>
   <script type="module" src="/index.ts"></script>
 </body>

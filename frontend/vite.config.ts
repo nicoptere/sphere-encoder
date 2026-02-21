@@ -1,13 +1,15 @@
 import { defineConfig } from 'vite';
+import basicSsl from '@vitejs/plugin-basic-ssl';
 
 export default defineConfig({
+    plugins: [
+        basicSsl()
+    ],
     server: {
+        host: true,
+        https: true,
         fs: {
-            // Allow serving files from one level up to the project root
             allow: ['..'],
         },
-    },
-    optimizeDeps: {
-        exclude: ['onnxruntime-web'],
     },
 });

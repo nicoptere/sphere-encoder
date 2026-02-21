@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGPU Decoder Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f172a;
+            color: white;
+            padding: 1rem;
+            margin: 0;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+        }
+
+        @media (min-width: 640px) {
+            .grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        .card {
+            background: #1e293b;
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid #334155;
+        }
+
+        .card.error {
+            border-color: #ef4444;
+            background: #451a1a;
+        }
+
+        .card.success {
+            border-color: #22c55e;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        h3 {
+            margin: 0 0 0.75rem 0;
+            font-size: 1rem;
+            color: #94a3b8;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 0.5rem;
+        }
+
+        #status {
+            font-family: monospace;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            background: #000;
+            border-left: 4px solid #3b82f6;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .info-label {
+            color: #94a3b8;
+        }
+
+        .info-value {
+            font-family: monospace;
+            color: #f8fafc;
+        }
+
+        canvas {
+            background: black;
+            border: 1px solid #334155;
+            width: 100%;
+            aspect-ratio: 1;
+            image-rendering: pixelated;
+            border-radius: 4px;
+        }
+
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 0.75rem 1rem;
+            border-radius: 6px;
+            width: 100%;
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 1rem;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            background: #334155;
+            margin: 0.1rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>WebGPU Diagnostic</h1>
+        <div id="status">Initializing...</div>
+
+        <div class="grid">
+            <div class="card" id="envCard">
+                <h3>Environment</h3>
+                <div class="info-row"><span class="info-label">Secure Context</span><span class="info-value"
+                        id="isSecure">--</span></div>
+                <div class="info-row"><span class="info-label">navigator.gpu</span><span class="info-value"
+                        id="hasGpu">--</span></div>
+                <div class="info-row"><span class="info-label">User Agent</span><span class="info-value" id="userAgent"
+                        style="font-size: 0.7rem;">--</span></div>
+            </div>
+
+            <div class="card" id="adapterCard">
+                <h3>GPU Adapter</h3>
+                <div id="adapterInfo">Wait for initialization...</div>
+            </div>
+
+            <div class="card">
+                <h3>Limits & Features</h3>
+                <div id="limitsInfo" style="font-size: 0.8rem;">--</div>
+                <div id="featuresList" style="margin-top: 0.5rem;"></div>
+            </div>
+
+            <div class="card">
+                <h3>Inference Test</h3>
+                <canvas id="webgpuCanvas"></canvas>
+                <div class="info-row" style="margin-top: 0.5rem;">
+                    <span class="info-label">Latency</span>
+                    <span class="info-value" id="webgpuTime">-- ms</span>
+                </div>
+                <button id="testBtn" disabled>Run Inference</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/test_webgpu.ts"></script>
+</body>
+
+</html>
