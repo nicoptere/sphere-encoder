@@ -1,4 +1,4 @@
-
+import './src/webgpu/css/index.scss';
 import { WebGPUEngine } from './src/webgpu/Engine';
 
 let LATENT_DIM = 512;
@@ -11,7 +11,6 @@ const inputCanvas = document.getElementById('inputCanvas') as HTMLCanvasElement;
 const outputCanvas = document.getElementById('outputCanvas') as HTMLCanvasElement;
 const sampleBtn = document.getElementById('sampleBtn') as HTMLButtonElement;
 const uploadBtn = document.getElementById('uploadBtn') as HTMLButtonElement;
-const reconstructBtn = document.getElementById('reconstructBtn') as HTMLButtonElement;
 const fileInput = document.getElementById('fileInput') as HTMLInputElement;
 const loopToggle = document.getElementById('loopToggle') as HTMLInputElement;
 const roamToggle = document.getElementById('roamToggle') as HTMLInputElement;
@@ -99,7 +98,6 @@ async function init() {
 
         statusEl.textContent = 'Ready.';
         sampleBtn.disabled = false;
-        reconstructBtn.disabled = false;
         sessionBusy = false; // Unblock
 
         randomizeLatent(); // Generate initial random image
@@ -295,7 +293,6 @@ async function masterLoop() {
 }
 
 sampleBtn.addEventListener('click', randomizeLatent);
-reconstructBtn.addEventListener('click', updateLatentRecon);
 randomizeInterp.addEventListener('click', setupInterpolationCorners);
 
 loopToggle.addEventListener('change', () => { isLooping = loopToggle.checked; });
