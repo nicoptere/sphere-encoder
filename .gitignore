@@ -2,3 +2,5 @@ __pycache__
 results
 data
 node_modules
+tmp
+frontend/public/models

@@ -41,6 +41,19 @@ def main():
         "--no-resume" # Start fresh because model architecture/dim changed
     ]
 
+    cmd = [
+        sys.executable, "training.py",
+        "--dataset", "data/ffhq_64",
+        "--batch_size", "128",
+        "--epochs", "1000",
+        "--steps", "200", # Approx 1 epoch of FFHQ-64x64
+        "--no-resume", # Start fresh because model architecture/dim changed
+        # Add eval and checkpoint frequency (epochs)
+        "--eval-frequency", "100",
+        "--checkpoint-frequency", "100"
+    ]
+
+
 
     print(f"Starting Optimal Training Run...")
     print(f"Command: {' '.join(cmd)}")

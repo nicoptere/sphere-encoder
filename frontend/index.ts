@@ -1,7 +1,9 @@
 import * as ort from 'onnxruntime-web';
 
-const LATENT_DIM = 512;
-const IMAGE_SIZE = 32;
+
+let LATENT_DIM = 512;
+let IMAGE_SIZE = 32;
+let MODEL_PATH = 'public/models/ffhq_64';
 
 let encoderSession: ort.InferenceSession | null = null;
 let decoderSession: ort.InferenceSession | null = null;
@@ -81,26 +83,67 @@ ort.env.wasm.wasmPaths = {
 ort.env.wasm.proxy = true;
 ort.env.wasm.numThreads = 1;
 
+
 async function init() {
     try {
+        statusEl.textContent = 'Loading metadata...';
+
+        const metaResp = await fetch(`${MODEL_PATH}/metadata.json`);
+        if (!metaResp.ok) throw new Error(`Could not load metadata from ${MODEL_PATH}`);
+
+        const metadata = await metaResp.json();
+        LATENT_DIM = metadata.latent_dim;
+        IMAGE_SIZE = metadata.image_size;
+
+        console.log(`Loaded model metadata: ${IMAGE_SIZE}x${IMAGE_SIZE}, Latent: ${LATENT_DIM}`);
+
+        // Re-initialize arrays that depend on LATENT_DIM
+        cornerLatents = [
+            new Float32Array(LATENT_DIM),
+            new Float32Array(LATENT_DIM),
+            new Float32Array(LATENT_DIM),
+            new Float32Array(LATENT_DIM)
+        ];
+        orbitA = new Float32Array(LATENT_DIM);
+        orbitB = new Float32Array(LATENT_DIM);
+
+        // Update canvas internal sizes
+        [inputCanvas, outputCanvas, interpResult, ...cornerCtxs.map(ctx => ctx.canvas)].forEach(canvas => {
+            canvas.width = IMAGE_SIZE;
+            canvas.height = IMAGE_SIZE;
+        });
+
         statusEl.textContent = 'Loading models...';
-        // Path relative to public folder in Vite
         const sessionOptions: ort.InferenceSession.SessionOptions = {
             executionProviders: ['webgpu', 'wasm'],
+            graphOptimizationLevel: 'all'
         };
-        encoderSession = await ort.InferenceSession.create('/model/encoder.onnx', sessionOptions);
-        decoderSession = await ort.InferenceSession.create('/model/decoder.onnx', sessionOptions);
-        statusEl.textContent = 'Models loaded! Ready.';
+
+        // Clear old sessions if switching
+        encoderSession = null;
+        decoderSession = null;
+        encoderSession = await ort.InferenceSession.create(`${MODEL_PATH}/encoder.onnx`, sessionOptions);
+        decoderSession = await ort.InferenceSession.create(`${MODEL_PATH}/decoder.onnx`, sessionOptions);
+
+        statusEl.textContent = `Models loaded (${metadata.dataset})! Ready.`;
         sampleBtn.disabled = false;
         reconstructBtn.disabled = false;
 
         // Setup interpolation
         await setupInterpolationCorners();
+
+        // Start loop if not already running
+        if (!loopStarted) {
+            loopStarted = true;
+            masterLoop();
+        }
     } catch (e) {
         statusEl.textContent = 'Error loading models: ' + e;
         console.error(e);
     }
 }
+
+let loopStarted = false;
 
 // Utility to draw data to canvas
 function drawToCanvas(ctx: CanvasRenderingContext2D, data: Float32Array) {
@@ -359,6 +402,17 @@ fileInput.addEventListener('change', async (e) => {
     img.src = URL.createObjectURL(file);
 });
 
+
+// Model selection
+const modelSelect = document.getElementById('modelSelect') as HTMLSelectElement;
+if (modelSelect) {
+    modelSelect.addEventListener('change', () => {
+        MODEL_PATH = `public/models/${modelSelect.value}`;
+        init();
+    });
+    // Set initial value
+    MODEL_PATH = `public/models/${modelSelect.value}`;
+}
 init();
 
 // --- Interpolation Logic ---
@@ -419,8 +473,7 @@ async function setupInterpolationCorners() {
         console.error("Failed to setup corners:", e);
     } finally {
         sessionBusy = false;
-        statusEl.textContent = 'Models loaded! Ready.';
-        masterLoop(); // Start the master loop
+        statusEl.textContent = 'Ready.';
     }
 }
 

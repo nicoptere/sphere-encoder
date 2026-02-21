@@ -101,6 +101,13 @@ def infer_config(dataset, args):
         
         if h >= 256: latent_dim = 1024
 
+    # Apply Overrides from Args
+    if args.latent_dim is not None: latent_dim = args.latent_dim
+    if args.patch_size is not None: patch_size = args.patch_size
+    if args.embed_dim is not None: embed_dim = args.embed_dim
+    if args.depth is not None: depth = args.depth
+    if args.num_heads is not None: num_heads = args.num_heads
+
     print(f"Inferred configuration: Size={h}x{w}, Model={args.model}, Latent={latent_dim}")
     
     config = Config()
@@ -118,6 +125,8 @@ def infer_config(dataset, args):
     config.iterations_per_epoch = args.steps
     config.eval_frequency = args.eval_frequency
     config.checkpoint_frequency = args.checkpoint_frequency
+    config.learning_rate = args.lr
+    config.sigma_max = args.sigma_max
     
     dataset_name = os.path.basename(args.dataset).replace('.', '')
     
@@ -290,16 +299,29 @@ def train(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    # Basic
     parser.add_argument('--dataset', type=str, default='cifar10', help='Dataset name (cifar10, flowers102) or path')
     parser.add_argument('--model', type=str, default='convnet', choices=['convnet', 'vit'], help='Model architecture')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--epochs', type=int, default=250, help='Total number of epochs')
     parser.add_argument('--steps', type=int, default=100, help='Steps (iterations) per epoch')
+    parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+    
+    # Model Hyperparameters
+    parser.add_argument('--latent_dim', type=int, default=None, help='Latent dimension (overrides inferred)')
+    parser.add_argument('--sigma_max', type=float, default=0.2, help='Noise injection sigma_max')
+    
+    # ViT specific
+    parser.add_argument('--patch_size', type=int, default=None, help='ViT patch size (overrides inferred)')
+    parser.add_argument('--embed_dim', type=int, default=None, help='ViT embedding dimension (overrides inferred)')
+    parser.add_argument('--depth', type=int, default=None, help='ViT depth (overrides inferred)')
+    parser.add_argument('--num_heads', type=int, default=None, help='ViT number of heads (overrides inferred)')
+    
+    # Maintenance
     parser.add_argument('--eval-frequency', type=int, default=100, help='Evaluation frequency (in epochs)')
     parser.add_argument('--checkpoint-frequency', type=int, default=100, help='Checkpoint frequency (in epochs)')
     
     # Resume flag: Default True
-    # We use a trick: --resume defaults to True. --no-resume sets it to False.
     parser.add_argument('--resume', dest='resume', action='store_true', help='Resume from latest run')
     parser.add_argument('--no-resume', dest='resume', action='store_false', help='Start a new run')
     parser.set_defaults(resume=True)
