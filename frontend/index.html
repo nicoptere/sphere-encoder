@@ -35,24 +35,12 @@
       </div>
     </header>
 
-    <main class="canvas-group">
-      <div class="canvas-item">
-        <div class="canvas-label">Source</div>
-        <canvas id="inputCanvas" width="32" height="32"></canvas>
-        <div id="encTime" class="timing-label"></div>
-      </div>
-      <div class="canvas-item">
-        <div class="canvas-label">Reconstruction</div>
-        <canvas id="outputCanvas" width="32" height="32"></canvas>
-        <div id="genTime" class="timing-label"></div>
-      </div>
-    </main>
+    <div class="separator"></div>
 
     <section class="controls">
       <div class="control-row">
         <div class="button-group">
-          <button id="uploadBtn">Upload Image</button>
-          <button id="sampleBtn" disabled>Random</button>
+          <button id="sampleBtn" disabled>Random Generation</button>
         </div>
 
         <div class="toggle-group">
@@ -71,7 +59,33 @@
           </div>
         </div>
       </div>
-      <input type="file" id="fileInput" accept="image/*">
+
+      <div class="canvas-group" style="margin-top: 1rem;">
+        <div class="canvas-item">
+          <div class="canvas-label">Random Reconstruction</div>
+          <canvas id="randomCanvas" width="32" height="32"></canvas>
+          <div id="randomTime" class="timing-label"></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="separator"></div>
+
+    <section class="image-section">
+      <input type="file" id="fileInput" accept="image/*" style="display: none;">
+
+      <main class="canvas-group">
+        <div class="canvas-item" id="sourceUploadGroup">
+          <div class="canvas-label">Source Preview (Upload / Drag & Drop)</div>
+          <canvas id="inputCanvas" width="32" height="32" class="interactive-canvas"></canvas>
+          <div id="encTime" class="timing-label"></div>
+        </div>
+        <div class="canvas-item">
+          <div class="canvas-label">Rendered Reconstruction</div>
+          <canvas id="outputCanvas" width="32" height="32"></canvas>
+          <div id="genTime" class="timing-label"></div>
+        </div>
+      </main>
     </section>
 
     <div id="status">Loading models...</div>

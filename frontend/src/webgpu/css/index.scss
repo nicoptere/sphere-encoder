@@ -120,10 +120,21 @@ body {
         gap: 0.5rem;
         width: 100%;
         max-width: 300px;
+        padding: 0.5rem;
+        border-radius: 12px;
+        transition: background 0.2s, border-color 0.2s;
+        border: 2px solid transparent;
+
+        &.dragover {
+            background: rgba($accent-blue, 0.1);
+            border-color: $accent-blue;
+            border-style: dashed;
+        }
 
         .canvas-label {
             font-size: 0.75rem;
             color: $text-secondary;
+            text-align: center;
         }
 
         canvas {
@@ -140,6 +151,16 @@ body {
             color: $text-muted;
             height: 1rem;
         }
+    }
+}
+
+.interactive-canvas {
+    cursor: pointer;
+    transition: transform 0.2s;
+
+    &:hover {
+        transform: scale(1.02);
+        border-color: lighten($accent-blue, 10%);
     }
 }
 
@@ -360,6 +381,30 @@ body {
             border: 1px solid $border-color;
             image-rendering: pixelated;
         }
+    }
+}
+
+.separator {
+    border-top: 1px solid $border-color;
+    width: 100%;
+    margin: 0.5rem 0;
+}
+
+.image-section {
+    @include card;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    align-items: center;
+}
+
+.interactive-canvas {
+    cursor: pointer;
+    transition: transform 0.2s;
+
+    &:hover {
+        transform: scale(1.02);
+        border-color: lighten($accent-blue, 10%);
     }
 }
 

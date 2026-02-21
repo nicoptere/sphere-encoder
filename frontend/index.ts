@@ -9,8 +9,8 @@ let engine: WebGPUEngine | null = null;
 
 const inputCanvas = document.getElementById('inputCanvas') as HTMLCanvasElement;
 const outputCanvas = document.getElementById('outputCanvas') as HTMLCanvasElement;
+const randomCanvas = document.getElementById('randomCanvas') as HTMLCanvasElement;
 const sampleBtn = document.getElementById('sampleBtn') as HTMLButtonElement;
-const uploadBtn = document.getElementById('uploadBtn') as HTMLButtonElement;
 const fileInput = document.getElementById('fileInput') as HTMLInputElement;
 const loopToggle = document.getElementById('loopToggle') as HTMLInputElement;
 const roamToggle = document.getElementById('roamToggle') as HTMLInputElement;
@@ -18,6 +18,7 @@ const lengthSlider = document.getElementById('lengthSlider') as HTMLInputElement
 const speedSlider = document.getElementById('speedSlider') as HTMLInputElement;
 const genTimeEl = document.getElementById('genTime') as HTMLDivElement;
 const encTimeEl = document.getElementById('encTime') as HTMLDivElement;
+const randomTimeEl = document.getElementById('randomTime') as HTMLDivElement;
 const statusEl = document.getElementById('status') as HTMLDivElement;
 
 const cornerTL = document.getElementById('corner-tl') as HTMLCanvasElement;
@@ -31,6 +32,7 @@ const randomizeInterp = document.getElementById('randomizeInterp') as HTMLButton
 
 const inputCtx = inputCanvas.getContext('2d', { willReadFrequently: true })!;
 const outputCtx = outputCanvas.getContext('2d', { willReadFrequently: true })!;
+const randomCtx = randomCanvas.getContext('2d', { willReadFrequently: true })!;
 const cornerCtxs = [
     cornerTL.getContext('2d', { willReadFrequently: true })!,
     cornerTR.getContext('2d', { willReadFrequently: true })!,
@@ -88,7 +90,7 @@ async function init() {
         orbitA = new Float32Array(LATENT_DIM);
         orbitB = new Float32Array(LATENT_DIM);
 
-        [inputCanvas, outputCanvas, interpResult, ...cornerCtxs.map(ctx => ctx.canvas)].forEach(canvas => {
+        [inputCanvas, outputCanvas, randomCanvas, interpResult, ...cornerCtxs.map(ctx => ctx.canvas)].forEach(canvas => {
             canvas.width = IMAGE_SIZE;
             canvas.height = IMAGE_SIZE;
         });
@@ -189,8 +191,8 @@ async function randomizeLatent() {
     const start = performance.now();
     const output = await engine.decode(latent);
     const end = performance.now();
-    drawToCanvas(outputCtx, output);
-    genTimeEl.textContent = `${(end - start).toFixed(1)}ms`;
+    drawToCanvas(randomCtx, output);
+    if (randomTimeEl) randomTimeEl.textContent = `${(end - start).toFixed(1)}ms`;
     sessionBusy = false;
 }
 
@@ -242,6 +244,9 @@ async function runInterpolation(x: number, y: number) {
 }
 
 async function masterLoop() {
+    let lastFpsUpdate = performance.now();
+    let frames = 0;
+
     const loop = async () => {
         if (!engine) { requestAnimationFrame(loop); return; }
 
@@ -273,10 +278,24 @@ async function masterLoop() {
                 const start = performance.now();
                 const output = await engine.decode(latent);
                 const end = performance.now();
-                drawToCanvas(outputCtx, output);
-                genTimeEl.textContent = `${(end - start).toFixed(1)}ms`;
+                drawToCanvas(randomCtx, output);
+
+                frames++;
+                const now = performance.now();
+                if (now - lastFpsUpdate > 500) {
+                    const fps = (frames * 1000) / (now - lastFpsUpdate);
+                    const ms = (now - lastFpsUpdate) / frames;
+                    if (randomTimeEl) randomTimeEl.textContent = `${fps.toFixed(1)} FPS / ${ms.toFixed(1)}ms`;
+                    frames = 0;
+                    lastFpsUpdate = now;
+                }
+
                 sessionBusy = false;
             }
+        } else {
+            // Reset FPS tracking when not active to avoid huge spikes on resume
+            frames = 0;
+            lastFpsUpdate = performance.now();
         }
 
         if (pendingInterpolation || Math.abs(currentInterpX - targetInterpX) > 0.01 || Math.abs(currentInterpY - targetInterpY) > 0.01) {
@@ -298,21 +317,46 @@ randomizeInterp.addEventListener('click', setupInterpolationCorners);
 loopToggle.addEventListener('change', () => { isLooping = loopToggle.checked; });
 roamToggle.addEventListener('change', () => { isRoaming = roamToggle.checked; });
 
-uploadBtn.addEventListener('click', () => fileInput.click());
+const sourceUploadGroup = document.getElementById('sourceUploadGroup') as HTMLDivElement;
+
+function handleFile(file: File) {
+    const reader = new FileReader();
+    reader.onload = (re) => {
+        const img = new Image();
+        img.onload = () => {
+            drawImageCenterCrop(inputCtx, img);
+            updateLatentRecon();
+        };
+        img.src = re.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+}
+
 fileInput.addEventListener('change', (e) => {
     const file = (e.target as HTMLInputElement).files?.[0];
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = (re) => {
-            const img = new Image();
-            img.onload = () => {
-                drawImageCenterCrop(inputCtx, img);
-                updateLatentRecon();
-            };
-            img.src = re.target?.result as string;
-        };
-        reader.readAsDataURL(file);
+    if (file) handleFile(file);
+});
+
+sourceUploadGroup.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    sourceUploadGroup.classList.add('dragover');
+});
+
+sourceUploadGroup.addEventListener('dragleave', () => {
+    sourceUploadGroup.classList.remove('dragover');
+});
+
+sourceUploadGroup.addEventListener('drop', (e) => {
+    e.preventDefault();
+    sourceUploadGroup.classList.remove('dragover');
+    const file = e.dataTransfer?.files[0];
+    if (file && file.type.startsWith('image/')) {
+        handleFile(file);
     }
+});
+
+inputCanvas.addEventListener('click', () => {
+    fileInput.click();
 });
 
 const modelSelect = document.getElementById('modelSelect') as HTMLSelectElement;
