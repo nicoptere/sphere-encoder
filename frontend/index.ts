@@ -318,6 +318,27 @@ loopToggle.addEventListener('change', () => { isLooping = loopToggle.checked; })
 roamToggle.addEventListener('change', () => { isRoaming = roamToggle.checked; });
 
 const sourceUploadGroup = document.getElementById('sourceUploadGroup') as HTMLDivElement;
+const thumbnailGrid = document.getElementById('thumbnailGrid') as HTMLDivElement;
+
+function handleImageUrl(url: string) {
+    const img = new Image();
+    img.onload = () => {
+        drawImageCenterCrop(inputCtx, img);
+        updateLatentRecon();
+    };
+    img.src = url;
+}
+
+// Populate Thumbnails
+for (let i = 1; i <= 9; i++) {
+    const img = document.createElement('img');
+    const url = `images/flower (${i}).jpg`;
+    img.src = url;
+    img.className = 'thumb';
+    img.alt = `Flower ${i}`;
+    img.addEventListener('click', () => handleImageUrl(url));
+    thumbnailGrid.appendChild(img);
+}
 
 function handleFile(file: File) {
     const reader = new FileReader();

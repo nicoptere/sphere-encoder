@@ -108,9 +108,10 @@ body {
     gap: 1rem;
     align-items: center;
 
-    @media (min-width: 640px) {
+    @media (min-width: 900px) {
         flex-direction: row;
         justify-content: center;
+        align-items: flex-start;
     }
 
     .canvas-item {
@@ -396,6 +397,37 @@ body {
     flex-direction: column;
     gap: 1.5rem;
     align-items: center;
+
+    .thumbnail-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.5rem;
+        width: 100%;
+        aspect-ratio: 1;
+        max-width: 300px;
+
+        .thumb {
+            width: 100%;
+            aspect-ratio: 1;
+            border-radius: 8px;
+            cursor: pointer;
+            border: 1px solid $border-color;
+            transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+            object-fit: cover;
+            background: $card-bg;
+
+            &:hover {
+                transform: scale(1.1);
+                border-color: $accent-blue;
+                box-shadow: 0 0 10px rgba($accent-blue, 0.4);
+                z-index: 2;
+            }
+
+            &:active {
+                transform: scale(0.95);
+            }
+        }
+    }
 }
 
 .interactive-canvas {

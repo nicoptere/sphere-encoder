@@ -75,13 +75,17 @@
       <input type="file" id="fileInput" accept="image/*" style="display: none;">
 
       <main class="canvas-group">
+        <div class="canvas-item">
+          <div class="canvas-label">Samples</div>
+          <div id="thumbnailGrid" class="thumbnail-grid"></div>
+        </div>
         <div class="canvas-item" id="sourceUploadGroup">
-          <div class="canvas-label">Source Preview (Upload / Drag & Drop)</div>
+          <div class="canvas-label">Source (Drag & Drop)</div>
           <canvas id="inputCanvas" width="32" height="32" class="interactive-canvas"></canvas>
           <div id="encTime" class="timing-label"></div>
         </div>
         <div class="canvas-item">
-          <div class="canvas-label">Rendered Reconstruction</div>
+          <div class="canvas-label">Reconstruction</div>
           <canvas id="outputCanvas" width="32" height="32"></canvas>
           <div id="genTime" class="timing-label"></div>
         </div>
