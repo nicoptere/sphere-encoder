@@ -196,8 +196,22 @@ export class WebGPUEngine {
         this.device.queue.submit([commandEncoder.finish()]);
 
         await readBuffer.mapAsync(GPUMapMode.READ);
-        const result = new Float32Array(readBuffer.getMappedRange().slice(0));
+        const rawResult = new Float32Array(readBuffer.getMappedRange().slice(0));
         readBuffer.unmap();
+
+        // Sphere Normalization (RMS/L2 Norm)
+        // Project onto sphere with radius sqrt(L) to match training distribution
+        let sumSq = 0;
+        for (let i = 0; i < rawResult.length; i++) sumSq += rawResult[i] * rawResult[i];
+        const norm = Math.sqrt(sumSq);
+        const radius = Math.sqrt(this.metadata!.latent_dim);
+
+        const result = new Float32Array(rawResult.length);
+        const scale = radius / (norm + 1e-10);
+        for (let i = 0; i < rawResult.length; i++) {
+            result[i] = rawResult[i] * scale;
+        }
+
         return result;
     }
 
