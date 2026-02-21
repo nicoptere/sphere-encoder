@@ -61,6 +61,7 @@ let orbitA: Float32Array;
 let orbitB: Float32Array;
 
 let currentCornerIndices = [-1, -1, -1, -1];
+let nextCornerIndex = 0;
 let targetInterpX = 0.5;
 let targetInterpY = 0.5;
 let currentInterpX = 0.5;
@@ -156,63 +157,65 @@ function setSourceLatent(data: Float32Array) {
 async function updateLatentRecon() {
     if (!engine || sessionBusy) return;
     sessionBusy = true;
-    const pixels = getPixelsFromCanvas(inputCtx);
-    const encStart = performance.now();
-    const latent = await engine.encode(pixels);
-    const encEnd = performance.now();
+    try {
+        const pixels = getPixelsFromCanvas(inputCtx);
+        const encStart = performance.now();
+        const latent = await engine.encode(pixels);
+        const encEnd = performance.now();
 
-    encTimeEl.textContent = `${(encEnd - encStart).toFixed(1)}ms (Enc)`;
-    setSourceLatent(latent);
+        encTimeEl.textContent = `${(encEnd - encStart).toFixed(1)}ms (Enc)`;
+        setSourceLatent(latent);
 
-    const decStart = performance.now();
-    const output = await engine.decode(latent);
-    const decEnd = performance.now();
-    drawToCanvas(outputCtx, output);
-    genTimeEl.textContent = `${(decEnd - decStart).toFixed(1)}ms (Dec)`;
-
-    sessionBusy = false;
+        const decStart = performance.now();
+        const output = await engine.decode(latent);
+        const decEnd = performance.now();
+        drawToCanvas(outputCtx, output);
+        genTimeEl.textContent = `${(decEnd - decStart).toFixed(1)}ms (Dec)`;
+    } finally {
+        sessionBusy = false;
+    }
 }
 
 async function randomizeLatent() {
     if (!engine || sessionBusy) return;
     sessionBusy = true;
-    const latent = new Float32Array(LATENT_DIM);
-    let sumSq = 0;
-    for (let i = 0; i < LATENT_DIM; i++) {
-        const z = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
-        latent[i] = z;
-        sumSq += z * z;
-    }
-    const norm = Math.sqrt(sumSq);
-    const radius = Math.sqrt(LATENT_DIM);
-    for (let i = 0; i < LATENT_DIM; i++) latent[i] = (latent[i] / norm) * radius;
+    try {
+        const latent = new Float32Array(LATENT_DIM);
+        let sumSq = 0;
+        for (let i = 0; i < LATENT_DIM; i++) {
+            const z = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
+            latent[i] = z;
+            sumSq += z * z;
+        }
+        const norm = Math.sqrt(sumSq);
+        const radius = Math.sqrt(LATENT_DIM);
+        for (let i = 0; i < LATENT_DIM; i++) latent[i] = (latent[i] / norm) * radius;
 
-    setSourceLatent(latent);
-    const start = performance.now();
-    const output = await engine.decode(latent);
-    const end = performance.now();
-    drawToCanvas(randomCtx, output);
-    if (randomTimeEl) randomTimeEl.textContent = `${(end - start).toFixed(1)}ms`;
-    sessionBusy = false;
+        setSourceLatent(latent);
+        const start = performance.now();
+        const output = await engine.decode(latent);
+        const end = performance.now();
+        drawToCanvas(randomCtx, output);
+        if (randomTimeEl) randomTimeEl.textContent = `${(end - start).toFixed(1)}ms`;
+    } finally {
+        sessionBusy = false;
+    }
 }
 
 async function setupInterpolationCorners() {
     if (!engine) return;
     for (let i = 0; i < 4; i++) {
-        const latent = new Float32Array(LATENT_DIM);
-        let sumSq = 0;
-        for (let j = 0; j < LATENT_DIM; j++) {
-            const z = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
-            latent[j] = z;
-            sumSq += z * z;
-        }
-        const norm = Math.sqrt(sumSq);
-        const radius = Math.sqrt(LATENT_DIM);
-        for (let j = 0; j < LATENT_DIM; j++) latent[j] = (latent[j] / norm) * radius;
+        const url = `images/ffhq (${i + 1}).png`;
+        const img = new Image();
+        await new Promise((resolve) => {
+            img.onload = resolve;
+            img.src = url;
+        });
 
+        drawImageCenterCrop(cornerCtxs[i], img);
+        const pixels = getPixelsFromCanvas(cornerCtxs[i]);
+        const latent = await engine.encode(pixels);
         cornerLatents[i] = latent;
-        const output = await engine.decode(latent);
-        drawToCanvas(cornerCtxs[i], output);
     }
     pendingInterpolation = true;
 }
@@ -314,23 +317,67 @@ async function masterLoop() {
 sampleBtn.addEventListener('click', randomizeLatent);
 randomizeInterp.addEventListener('click', setupInterpolationCorners);
 
-loopToggle.addEventListener('change', () => { isLooping = loopToggle.checked; });
-roamToggle.addEventListener('change', () => { isRoaming = roamToggle.checked; });
+function resetAnimations() {
+    isLooping = false;
+    isRoaming = false;
+    loopToggle.checked = false;
+    roamToggle.checked = false;
+}
+
+loopToggle.addEventListener('change', () => {
+    isLooping = loopToggle.checked;
+    if (isLooping) {
+        isRoaming = false;
+        roamToggle.checked = false;
+    }
+});
+
+roamToggle.addEventListener('change', () => {
+    isRoaming = roamToggle.checked;
+    if (isRoaming) {
+        isLooping = false;
+        loopToggle.checked = false;
+    }
+});
 
 const sourceUploadGroup = document.getElementById('sourceUploadGroup') as HTMLDivElement;
 const thumbnailGrid = document.getElementById('thumbnailGrid') as HTMLDivElement;
 
-function handleImageUrl(url: string) {
+async function handleImageUrl(url: string) {
+    if (!engine) return;
     const img = new Image();
-    img.onload = () => {
+    img.onload = async () => {
+        // Update main reconstruction
         drawImageCenterCrop(inputCtx, img);
         updateLatentRecon();
+
+        // Also update interpolation corner
+        const cornerIdx = nextCornerIndex;
+        drawImageCenterCrop(cornerCtxs[cornerIdx], img);
+        const pixels = getPixelsFromCanvas(cornerCtxs[cornerIdx]);
+        const latent = await engine.encode(pixels);
+        cornerLatents[cornerIdx] = latent;
+
+        nextCornerIndex = (nextCornerIndex + 1) % 4;
+        pendingInterpolation = true;
     };
     img.src = url;
 }
 
 // Populate Thumbnails
-for (let i = 1; i <= 9; i++) {
+// Add FFHQ images
+for (let i = 1; i <= 10; i++) {
+    const img = document.createElement('img');
+    const url = `images/ffhq (${i}).png`;
+    img.src = url;
+    img.className = 'thumb';
+    img.alt = `FFHQ ${i}`;
+    img.addEventListener('click', () => handleImageUrl(url));
+    thumbnailGrid.appendChild(img);
+}
+
+// Add Flower images
+for (let i = 1; i <= 10; i++) {
     const img = document.createElement('img');
     const url = `images/flower (${i}).jpg`;
     img.src = url;
@@ -356,6 +403,7 @@ function handleFile(file: File) {
 fileInput.addEventListener('change', (e) => {
     const file = (e.target as HTMLInputElement).files?.[0];
     if (file) handleFile(file);
+    fileInput.value = ''; // Reset to allow re-selection of same file
 });
 
 sourceUploadGroup.addEventListener('dragover', (e) => {
@@ -385,6 +433,7 @@ const quantSelect = document.getElementById('quantSelect') as HTMLSelectElement;
 
 if (modelSelect) {
     modelSelect.addEventListener('change', () => {
+        resetAnimations();
         MODEL_PATH = `models/${modelSelect.value}`;
         console.log(`Model selection changed to: ${MODEL_PATH}`);
         init();
@@ -394,6 +443,7 @@ if (modelSelect) {
 
 if (quantSelect) {
     quantSelect.addEventListener('change', () => {
+        resetAnimations();
         console.log(`Quantization changed to: ${quantSelect.value}`);
         init();
     });
