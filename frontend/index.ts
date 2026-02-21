@@ -67,12 +67,16 @@ let currentInterpY = 0.5;
 
 async function init() {
     try {
+        sessionBusy = true; // Block loops during engine swap
         const quantSelect = document.getElementById('quantSelect') as HTMLSelectElement;
         const quantMode = quantSelect?.value || 'f32';
 
         statusEl.textContent = `Initializing WebGPU engine (${quantMode})...`;
-        engine = new WebGPUEngine();
-        await engine.init(MODEL_PATH, quantMode);
+        const newEngine = new WebGPUEngine();
+        await newEngine.init(MODEL_PATH, quantMode);
+
+        // Only assign and unblock once init is successful
+        engine = newEngine;
         const metadata = engine.getMetadata()!;
 
         LATENT_DIM = metadata.latent_dim;
@@ -96,6 +100,9 @@ async function init() {
         statusEl.textContent = 'Ready.';
         sampleBtn.disabled = false;
         reconstructBtn.disabled = false;
+        sessionBusy = false; // Unblock
+
+        randomizeLatent(); // Generate initial random image
 
         if (!loopStarted) {
             loopStarted = true;
@@ -104,6 +111,7 @@ async function init() {
     } catch (e) {
         statusEl.textContent = 'Initialization error: ' + e;
         console.error(e);
+        sessionBusy = false;
     }
 }
 
@@ -264,8 +272,11 @@ async function masterLoop() {
                 }
 
                 sessionBusy = true;
+                const start = performance.now();
                 const output = await engine.decode(latent);
+                const end = performance.now();
                 drawToCanvas(outputCtx, output);
+                genTimeEl.textContent = `${(end - start).toFixed(1)}ms`;
                 sessionBusy = false;
             }
         }
