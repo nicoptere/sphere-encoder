@@ -1,12 +1,11 @@
-import * as ort from 'onnxruntime-web';
 
+import { WebGPUEngine } from './src/webgpu/Engine';
 
 let LATENT_DIM = 512;
 let IMAGE_SIZE = 32;
-let MODEL_PATH = 'public/models/ffhq_64';
+let MODEL_PATH = 'models/ffhq_64';
 
-let encoderSession: ort.InferenceSession | null = null;
-let decoderSession: ort.InferenceSession | null = null;
+let engine: WebGPUEngine | null = null;
 
 const inputCanvas = document.getElementById('inputCanvas') as HTMLCanvasElement;
 const outputCanvas = document.getElementById('outputCanvas') as HTMLCanvasElement;
@@ -31,15 +30,15 @@ const interpCursor = document.getElementById('interpCursor') as HTMLDivElement;
 const interpResult = document.getElementById('interpResult') as HTMLCanvasElement;
 const randomizeInterp = document.getElementById('randomizeInterp') as HTMLButtonElement;
 
-const inputCtx = inputCanvas.getContext('2d')!;
-const outputCtx = outputCanvas.getContext('2d')!;
+const inputCtx = inputCanvas.getContext('2d', { willReadFrequently: true })!;
+const outputCtx = outputCanvas.getContext('2d', { willReadFrequently: true })!;
 const cornerCtxs = [
-    cornerTL.getContext('2d')!,
-    cornerTR.getContext('2d')!,
-    cornerBL.getContext('2d')!,
-    cornerBR.getContext('2d')!
+    cornerTL.getContext('2d', { willReadFrequently: true })!,
+    cornerTR.getContext('2d', { willReadFrequently: true })!,
+    cornerBL.getContext('2d', { willReadFrequently: true })!,
+    cornerBR.getContext('2d', { willReadFrequently: true })!
 ];
-const interpResultCtx = interpResult.getContext('2d')!;
+const interpResultCtx = interpResult.getContext('2d', { willReadFrequently: true })!;
 
 // Utility to draw image center-cropped and resized
 function drawImageCenterCrop(ctx: CanvasRenderingContext2D, img: HTMLImageElement) {
@@ -50,111 +49,69 @@ function drawImageCenterCrop(ctx: CanvasRenderingContext2D, img: HTMLImageElemen
     ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, IMAGE_SIZE, IMAGE_SIZE);
 }
 
-let cornerLatents: Float32Array[] = [
-    new Float32Array(LATENT_DIM),
-    new Float32Array(LATENT_DIM),
-    new Float32Array(LATENT_DIM),
-    new Float32Array(LATENT_DIM)
-];
-
+let cornerLatents: Float32Array[] = [];
 let isLooping = false;
 let isRoaming = false;
 let sessionBusy = false;
 let pendingInterpolation = false;
 
 let sourceLatent: Float32Array | null = null;
-let orbitA = new Float32Array(LATENT_DIM);
-let orbitB = new Float32Array(LATENT_DIM);
+let orbitA: Float32Array;
+let orbitB: Float32Array;
 
 let currentCornerIndices = [-1, -1, -1, -1];
-
 let targetInterpX = 0.5;
 let targetInterpY = 0.5;
 let currentInterpX = 0.5;
 let currentInterpY = 0.5;
 
-// Configure ONNX wasm paths
-ort.env.wasm.wasmPaths = {
-    'ort-wasm-simd-threaded.jsep.wasm': '/ort-assets/ort-wasm-simd-threaded.jsep.wasm',
-    'ort-wasm-simd-threaded.jsep.js': '/ort-assets/ort-wasm-simd-threaded.jsep.js',
-    'ort-wasm-simd-threaded.wasm': '/ort-assets/ort-wasm-simd-threaded.wasm',
-    'ort-wasm-simd-threaded.js': '/ort-assets/ort-wasm-simd-threaded.js',
-};
-ort.env.wasm.proxy = true;
-ort.env.wasm.numThreads = 1;
-
-
 async function init() {
     try {
-        statusEl.textContent = 'Loading metadata...';
+        statusEl.textContent = 'Initializing WebGPU engine...';
+        engine = new WebGPUEngine();
+        await engine.init(MODEL_PATH);
+        const metadata = engine.getMetadata()!;
 
-        const metaResp = await fetch(`${MODEL_PATH}/metadata.json`);
-        if (!metaResp.ok) throw new Error(`Could not load metadata from ${MODEL_PATH}`);
-
-        const metadata = await metaResp.json();
         LATENT_DIM = metadata.latent_dim;
         IMAGE_SIZE = metadata.image_size;
 
-        console.log(`Loaded model metadata: ${IMAGE_SIZE}x${IMAGE_SIZE}, Latent: ${LATENT_DIM}`);
+        console.log(`WebGPU Model Loaded: ${IMAGE_SIZE}x${IMAGE_SIZE}, Latent: ${LATENT_DIM}`);
 
-        // Re-initialize arrays that depend on LATENT_DIM
-        cornerLatents = [
-            new Float32Array(LATENT_DIM),
-            new Float32Array(LATENT_DIM),
-            new Float32Array(LATENT_DIM),
-            new Float32Array(LATENT_DIM)
-        ];
+        // Re-initialize arrays
+        cornerLatents = Array.from({ length: 4 }, () => new Float32Array(LATENT_DIM));
         orbitA = new Float32Array(LATENT_DIM);
         orbitB = new Float32Array(LATENT_DIM);
 
-        // Update canvas internal sizes
         [inputCanvas, outputCanvas, interpResult, ...cornerCtxs.map(ctx => ctx.canvas)].forEach(canvas => {
             canvas.width = IMAGE_SIZE;
             canvas.height = IMAGE_SIZE;
         });
 
-        statusEl.textContent = 'Loading models...';
-        const sessionOptions: ort.InferenceSession.SessionOptions = {
-            executionProviders: ['webgpu', 'wasm'],
-            graphOptimizationLevel: 'all'
-        };
+        statusEl.textContent = 'Syncing corners...';
+        await setupInterpolationCorners();
 
-        // Clear old sessions if switching
-        encoderSession = null;
-        decoderSession = null;
-        encoderSession = await ort.InferenceSession.create(`${MODEL_PATH}/encoder.onnx`, sessionOptions);
-        decoderSession = await ort.InferenceSession.create(`${MODEL_PATH}/decoder.onnx`, sessionOptions);
-
-        statusEl.textContent = `Models loaded (${metadata.dataset})! Ready.`;
+        statusEl.textContent = 'Ready.';
         sampleBtn.disabled = false;
         reconstructBtn.disabled = false;
 
-        // Setup interpolation
-        await setupInterpolationCorners();
-
-        // Start loop if not already running
         if (!loopStarted) {
             loopStarted = true;
             masterLoop();
         }
     } catch (e) {
-        statusEl.textContent = 'Error loading models: ' + e;
+        statusEl.textContent = 'Initialization error: ' + e;
         console.error(e);
     }
 }
 
 let loopStarted = false;
 
-// Utility to draw data to canvas
 function drawToCanvas(ctx: CanvasRenderingContext2D, data: Float32Array) {
     const imageData = ctx.createImageData(IMAGE_SIZE, IMAGE_SIZE);
     for (let i = 0; i < IMAGE_SIZE * IMAGE_SIZE; i++) {
-        // data is [-1, 1], convert to [0, 255]
-        // data order is C, H, W (3, 32, 32)
         const r = (data[i] * 0.5 + 0.5) * 255;
         const g = (data[i + IMAGE_SIZE * IMAGE_SIZE] * 0.5 + 0.5) * 255;
         const b = (data[i + 2 * IMAGE_SIZE * IMAGE_SIZE] * 0.5 + 0.5) * 255;
-
         const idx = i * 4;
         imageData.data[idx] = r;
         imageData.data[idx + 1] = g;
@@ -164,115 +121,84 @@ function drawToCanvas(ctx: CanvasRenderingContext2D, data: Float32Array) {
     ctx.putImageData(imageData, 0, 0);
 }
 
-// Utility to get tensor from image
-function getTensorFromCanvas(ctx: CanvasRenderingContext2D): ort.Tensor {
+function getPixelsFromCanvas(ctx: CanvasRenderingContext2D): Float32Array {
     const imageData = ctx.getImageData(0, 0, IMAGE_SIZE, IMAGE_SIZE);
     const data = new Float32Array(3 * IMAGE_SIZE * IMAGE_SIZE);
     for (let i = 0; i < IMAGE_SIZE * IMAGE_SIZE; i++) {
         const idx = i * 4;
-        // [0, 255] -> [-1, 1]
         data[i] = (imageData.data[idx] / 255) * 2 - 1;
         data[i + IMAGE_SIZE * IMAGE_SIZE] = (imageData.data[idx + 1] / 255) * 2 - 1;
         data[i + 2 * IMAGE_SIZE * IMAGE_SIZE] = (imageData.data[idx + 2] / 255) * 2 - 1;
     }
-    return new ort.Tensor('float32', data, [1, 3, IMAGE_SIZE, IMAGE_SIZE]);
+    return data;
 }
 
 function setSourceLatent(data: Float32Array) {
-    // CLONE the data so ONNX doesn't overwrite it
     sourceLatent = new Float32Array(data);
-
-    // Pick two random unit vectors for the orbit plane
     const radius = Math.sqrt(LATENT_DIM);
     for (let i = 0; i < LATENT_DIM; i++) {
-        const u1 = Math.max(1e-10, Math.random());
-        const u2 = Math.random();
-        orbitA[i] = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-
-        const v1 = Math.max(1e-10, Math.random());
-        const v2 = Math.random();
-        orbitB[i] = Math.sqrt(-2.0 * Math.log(v1)) * Math.cos(2.0 * Math.PI * v2);
+        orbitA[i] = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
+        orbitB[i] = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
     }
-
-    // Gram-Schmidt to make them orthogonal to each other and optionally the source (not strictly necessary but nicer)
-    let dotA = 0, dotB = 0, dotAB = 0;
-    for (let i = 0; i < LATENT_DIM; i++) {
-        dotA += orbitA[i] * orbitA[i];
-        dotB += orbitB[i] * orbitB[i];
-        dotAB += orbitA[i] * orbitB[i];
-    }
+    // Simple orthonormalization
+    let dotA = 0;
+    for (let i = 0; i < LATENT_DIM; i++) dotA += orbitA[i] * orbitA[i];
     const normA = Math.sqrt(dotA);
     for (let i = 0; i < LATENT_DIM; i++) orbitA[i] /= normA;
 
-    // Project A out of B
-    for (let i = 0; i < LATENT_DIM; i++) orbitB[i] -= dotAB / dotA * orbitA[i];
-    let dotB2 = 0;
-    for (let i = 0; i < LATENT_DIM; i++) dotB2 += orbitB[i] * orbitB[i];
-    const normB = Math.sqrt(dotB2);
+    let dotAB = 0;
+    for (let i = 0; i < LATENT_DIM; i++) dotAB += orbitA[i] * orbitB[i];
+    for (let i = 0; i < LATENT_DIM; i++) orbitB[i] -= dotAB * orbitA[i];
+
+    let dotB = 0;
+    for (let i = 0; i < LATENT_DIM; i++) dotB += orbitB[i] * orbitB[i];
+    const normB = Math.sqrt(dotB);
     for (let i = 0; i < LATENT_DIM; i++) orbitB[i] /= normB;
 
-    // Rescale to latent radius
     for (let i = 0; i < LATENT_DIM; i++) {
         orbitA[i] *= radius;
         orbitB[i] *= radius;
     }
 }
 
-async function runInference(inputData: Float32Array | null = null) {
-    if (!encoderSession || !decoderSession || sessionBusy) return;
-
+async function runInference(pixels: Float32Array | null = null) {
+    if (!engine || sessionBusy) return;
     sessionBusy = true;
     try {
         const startTime = performance.now();
-        let latent: ort.Tensor;
+        let latent: Float32Array;
 
-        if (inputData) {
-            // Reconstruction mode
-            const inputTensor = new ort.Tensor('float32', inputData, [1, 3, IMAGE_SIZE, IMAGE_SIZE]);
+        if (pixels) {
             const encStart = performance.now();
-            const encoderResults = await encoderSession.run({ input: inputTensor });
+            latent = await engine.encode(pixels);
             const encEnd = performance.now();
             encTimeEl.textContent = `${(encEnd - encStart).toFixed(1)} ms`;
-            latent = encoderResults.latent;
-            setSourceLatent(latent.data as Float32Array);
+            setSourceLatent(latent);
         } else {
-            // Random mode
             encTimeEl.textContent = '';
-            const noise = new Float32Array(LATENT_DIM);
+            latent = new Float32Array(LATENT_DIM);
             let sumSq = 0;
             for (let i = 0; i < LATENT_DIM; i++) {
-                const u1 = Math.max(1e-10, Math.random());
-                const u2 = Math.random();
-                const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-                noise[i] = z0;
-                sumSq += z0 * z0;
+                const z = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
+                latent[i] = z;
+                sumSq += z * z;
             }
             const norm = Math.sqrt(sumSq);
             const radius = Math.sqrt(LATENT_DIM);
-            for (let i = 0; i < LATENT_DIM; i++) {
-                noise[i] = (noise[i] / norm) * radius;
-            }
-            latent = new ort.Tensor('float32', noise, [1, LATENT_DIM]);
-            setSourceLatent(noise);
+            for (let i = 0; i < LATENT_DIM; i++) latent[i] = (latent[i] / norm) * radius;
+            setSourceLatent(latent);
         }
 
-        const decoderResults = await decoderSession.run({ latent: latent });
-        const output = decoderResults.output.data as Float32Array;
-
+        const output = await engine.decode(latent);
         const endTime = performance.now();
         genTimeEl.textContent = `${(endTime - startTime).toFixed(1)} ms`;
-
         drawToCanvas(outputCtx, output);
-    } catch (e) {
-        console.error("Inference error:", e);
     } finally {
         sessionBusy = false;
     }
 }
 
-// Consolidating all loops into one master loop
 async function masterLoop() {
-    // 1. Easing for Interpolation Pad
     const dx = targetInterpX - currentInterpX;
     const dy = targetInterpY - currentInterpY;
     const interpMoved = Math.abs(dx) > 0.0001 || Math.abs(dy) > 0.0001;
@@ -284,8 +210,7 @@ async function masterLoop() {
         interpCursor.style.top = `${currentInterpY * 100}%`;
     }
 
-    // 2. Decide what to infer (Prioritize: Interpolation > Roaming > Loop)
-    if (!sessionBusy && decoderSession) {
+    if (!sessionBusy && engine) {
         if (interpMoved || pendingInterpolation) {
             pendingInterpolation = false;
             await runInterpolationUpdate();
@@ -295,28 +220,24 @@ async function masterLoop() {
             await runInference();
         }
     }
-
     requestAnimationFrame(masterLoop);
 }
 
 async function runRoamFrame() {
-    if (!sourceLatent || !decoderSession) return;
+    if (!sourceLatent || !engine) return;
     sessionBusy = true;
     try {
         const startTime = performance.now();
-        const time = startTime * 0.001;
+        const angle = startTime * 0.001 * parseFloat(speedSlider.value);
         const length = parseFloat(lengthSlider.value);
-        const speed = parseFloat(speedSlider.value);
+        const radius = Math.sqrt(LATENT_DIM);
 
-        const angle = time * speed;
         const morphed = new Float32Array(LATENT_DIM);
         let sumSq = 0;
-
         const cosL = Math.cos(length);
         const sinL = Math.sin(length);
         const cosA = Math.cos(angle);
         const sinA = Math.sin(angle);
-        const radius = Math.sqrt(LATENT_DIM);
 
         for (let i = 0; i < LATENT_DIM; i++) {
             const val = sourceLatent[i] * cosL + (orbitA[i] * cosA + orbitB[i] * sinA) * sinL;
@@ -325,24 +246,18 @@ async function runRoamFrame() {
         }
 
         const norm = Math.sqrt(sumSq);
-        for (let i = 0; i < LATENT_DIM; i++) {
-            morphed[i] = (morphed[i] / norm) * radius;
-        }
+        for (let i = 0; i < LATENT_DIM; i++) morphed[i] = (morphed[i] / norm) * radius;
 
-        const latentTensor = new ort.Tensor('float32', morphed, [1, LATENT_DIM]);
-        const decoderResults = await decoderSession.run({ latent: latentTensor });
-
-        const endTime = performance.now();
-        genTimeEl.textContent = `${(endTime - startTime).toFixed(1)} ms`;
-
-        drawToCanvas(outputCtx, decoderResults.output.data as Float32Array);
+        const output = await engine.decode(morphed);
+        genTimeEl.textContent = `${(performance.now() - startTime).toFixed(1)} ms`;
+        drawToCanvas(outputCtx, output);
     } finally {
         sessionBusy = false;
     }
 }
 
 async function runInterpolationUpdate() {
-    if (!decoderSession) return;
+    if (!engine) return;
     sessionBusy = true;
     try {
         const x = currentInterpX;
@@ -358,147 +273,68 @@ async function runInterpolationUpdate() {
         }
         const norm = Math.sqrt(sumSq);
         const radius = Math.sqrt(LATENT_DIM);
-        for (let i = 0; i < LATENT_DIM; i++) {
-            interpolated[i] = (interpolated[i] / norm) * radius;
-        }
+        for (let i = 0; i < LATENT_DIM; i++) interpolated[i] = (interpolated[i] / norm) * radius;
 
-        const latent = new ort.Tensor('float32', interpolated, [1, LATENT_DIM]);
-        const decoderResults = await decoderSession.run({ latent: latent });
-        drawToCanvas(interpResultCtx, decoderResults.output.data as Float32Array);
+        const output = await engine.decode(interpolated);
+        drawToCanvas(interpResultCtx, output);
     } finally {
         sessionBusy = false;
     }
 }
 
-sampleBtn.addEventListener('click', () => {
-    runInference();
-});
-
-reconstructBtn.addEventListener('click', () => {
-    const tensor = getTensorFromCanvas(inputCtx);
-    runInference(tensor.data as Float32Array);
-});
-
-loopToggle.addEventListener('change', () => {
-    isLooping = loopToggle.checked;
-});
-
-roamToggle.addEventListener('change', () => {
-    isRoaming = roamToggle.checked;
-});
-
+sampleBtn.addEventListener('click', () => runInference());
+reconstructBtn.addEventListener('click', () => runInference(getPixelsFromCanvas(inputCtx)));
+loopToggle.addEventListener('change', () => isLooping = loopToggle.checked);
+roamToggle.addEventListener('change', () => isRoaming = roamToggle.checked);
 uploadBtn.addEventListener('click', () => fileInput.click());
-
-fileInput.addEventListener('change', async (e) => {
+fileInput.addEventListener('change', (e) => {
     const file = (e.target as HTMLInputElement).files?.[0];
     if (!file) return;
-
     const img = new Image();
     img.onload = () => {
         drawImageCenterCrop(inputCtx, img);
-        const tensor = getTensorFromCanvas(inputCtx);
-        runInference(tensor.data as Float32Array);
+        runInference(getPixelsFromCanvas(inputCtx));
     };
     img.src = URL.createObjectURL(file);
 });
 
-
-// Model selection
-const modelSelect = document.getElementById('modelSelect') as HTMLSelectElement;
-if (modelSelect) {
-    modelSelect.addEventListener('change', () => {
-        MODEL_PATH = `public/models/${modelSelect.value}`;
-        init();
-    });
-    // Set initial value
-    MODEL_PATH = `public/models/${modelSelect.value}`;
-}
-init();
-
-// --- Interpolation Logic ---
-
 async function fetchRandomFlowerImage(exclude: number[] = []): Promise<{ img: HTMLImageElement, idx: number }> {
     let idx: number;
-    let attempts = 0;
-    do {
-        idx = Math.floor(Math.random() * 10) + 1;
-        attempts++;
-    } while (exclude.includes(idx) && attempts < 100);
-
+    do { idx = Math.floor(Math.random() * 10) + 1; } while (exclude.includes(idx));
     const url = `/images/flower (${idx}).jpg`;
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.crossOrigin = "anonymous";
         img.onload = () => resolve({ img, idx });
-        img.onerror = (e) => reject(e);
+        img.onerror = reject;
         img.src = url;
     });
 }
 
 async function fetchAndEncodeCorner(i: number) {
-    // Exclude other corners to ensure uniqueness
     const exclude = currentCornerIndices.filter((_, index) => index !== i);
     const { img, idx } = await fetchRandomFlowerImage(exclude);
     currentCornerIndices[i] = idx;
-
-    const ctx = cornerCtxs[i];
-    drawImageCenterCrop(ctx, img);
-    const tensor = getTensorFromCanvas(ctx);
-    const results = await encoderSession!.run({ input: tensor });
-    cornerLatents[i] = results.latent.data as Float32Array;
-}
-
-async function randomizeCorner(i: number) {
-    if (!encoderSession || sessionBusy) return;
-    sessionBusy = true;
-    try {
-        await fetchAndEncodeCorner(i);
-    } catch (e) {
-        console.error(`Failed to randomize corner ${i}:`, e);
-    } finally {
-        sessionBusy = false;
-        pendingInterpolation = true;
-    }
+    drawImageCenterCrop(cornerCtxs[i], img);
+    cornerLatents[i] = await engine!.encode(getPixelsFromCanvas(cornerCtxs[i]));
 }
 
 async function setupInterpolationCorners() {
-    if (!encoderSession || sessionBusy) return;
-    sessionBusy = true;
-    statusEl.textContent = 'Encoding corners...';
-    try {
-        for (let i = 0; i < 4; i++) {
-            await fetchAndEncodeCorner(i);
-        }
-    } catch (e) {
-        console.error("Failed to setup corners:", e);
-    } finally {
-        sessionBusy = false;
-        statusEl.textContent = 'Ready.';
-    }
+    for (let i = 0; i < 4; i++) await fetchAndEncodeCorner(i);
 }
 
-function handlePadInteraction(e: MouseEvent | TouchEvent) {
-    const rect = interpPad.getBoundingClientRect();
-    let clientX, clientY;
-
-    if ('touches' in e) {
-        clientX = (e as TouchEvent).touches[0].clientX;
-        clientY = (e as TouchEvent).touches[0].clientY;
-    } else {
-        clientX = (e as MouseEvent).clientX;
-        clientY = (e as MouseEvent).clientY;
-    }
-
-    let x = (clientX - rect.left) / rect.width;
-    let y = (clientY - rect.top) / rect.height;
-
-    // Constrain
-    x = Math.max(0, Math.min(1, x));
-    y = Math.max(0, Math.min(1, y));
-
-    targetInterpX = x;
-    targetInterpY = y;
+const modelSelect = document.getElementById('modelSelect') as HTMLSelectElement;
+if (modelSelect) {
+    modelSelect.addEventListener('change', () => {
+        MODEL_PATH = `models/${modelSelect.value}`;
+        console.log(`Model selection changed to: ${MODEL_PATH}`);
+        init();
+    });
+    MODEL_PATH = `models/${modelSelect.value}`;
+    console.log(`Initial model path from select: ${MODEL_PATH}`);
 }
+
+init();
 
 interpPad.addEventListener('mousedown', (e) => {
     handlePadInteraction(e);
@@ -511,11 +347,18 @@ interpPad.addEventListener('mousedown', (e) => {
     window.addEventListener('mouseup', onMouseUp);
 });
 
-randomizeInterp.addEventListener('click', () => {
-    setupInterpolationCorners();
+randomizeInterp.addEventListener('click', () => setupInterpolationCorners().then(() => pendingInterpolation = true));
+cornerCtxs.forEach((ctx, i) => {
+    ctx.canvas.addEventListener('click', () => {
+        if (!sessionBusy) fetchAndEncodeCorner(i).then(() => pendingInterpolation = true);
+    });
+    ctx.canvas.style.cursor = 'pointer';
 });
 
-[cornerTL, cornerTR, cornerBL, cornerBR].forEach((canvas, i) => {
-    canvas.addEventListener('click', () => randomizeCorner(i));
-    canvas.style.cursor = 'pointer';
-});
+function handlePadInteraction(e: MouseEvent | TouchEvent) {
+    const rect = interpPad.getBoundingClientRect();
+    const cx = ('touches' in e) ? e.touches[0].clientX : e.clientX;
+    const cy = ('touches' in e) ? e.touches[0].clientY : e.clientY;
+    targetInterpX = Math.max(0, Math.min(1, (cx - rect.left) / rect.width));
+    targetInterpY = Math.max(0, Math.min(1, (cy - rect.top) / rect.height));
+}
