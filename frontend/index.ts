@@ -67,15 +67,18 @@ let currentInterpY = 0.5;
 
 async function init() {
     try {
-        statusEl.textContent = 'Initializing WebGPU engine...';
+        const quantSelect = document.getElementById('quantSelect') as HTMLSelectElement;
+        const quantMode = quantSelect?.value || 'f32';
+
+        statusEl.textContent = `Initializing WebGPU engine (${quantMode})...`;
         engine = new WebGPUEngine();
-        await engine.init(MODEL_PATH);
+        await engine.init(MODEL_PATH, quantMode);
         const metadata = engine.getMetadata()!;
 
         LATENT_DIM = metadata.latent_dim;
         IMAGE_SIZE = metadata.image_size;
 
-        console.log(`WebGPU Model Loaded: ${IMAGE_SIZE}x${IMAGE_SIZE}, Latent: ${LATENT_DIM}`);
+        console.log(`WebGPU Model Loaded: ${IMAGE_SIZE}x${IMAGE_SIZE}, Latent: ${LATENT_DIM}, Mode: ${quantMode}`);
 
         // Re-initialize arrays
         cornerLatents = Array.from({ length: 4 }, () => new Float32Array(LATENT_DIM));
@@ -140,190 +143,173 @@ function setSourceLatent(data: Float32Array) {
         orbitA[i] = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
         orbitB[i] = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
     }
-    // Simple orthonormalization
-    let dotA = 0;
-    for (let i = 0; i < LATENT_DIM; i++) dotA += orbitA[i] * orbitA[i];
-    const normA = Math.sqrt(dotA);
-    for (let i = 0; i < LATENT_DIM; i++) orbitA[i] /= normA;
-
-    let dotAB = 0;
-    for (let i = 0; i < LATENT_DIM; i++) dotAB += orbitA[i] * orbitB[i];
-    for (let i = 0; i < LATENT_DIM; i++) orbitB[i] -= dotAB * orbitA[i];
-
-    let dotB = 0;
-    for (let i = 0; i < LATENT_DIM; i++) dotB += orbitB[i] * orbitB[i];
-    const normB = Math.sqrt(dotB);
-    for (let i = 0; i < LATENT_DIM; i++) orbitB[i] /= normB;
-
-    for (let i = 0; i < LATENT_DIM; i++) {
-        orbitA[i] *= radius;
-        orbitB[i] *= radius;
-    }
 }
 
-async function runInference(pixels: Float32Array | null = null) {
+async function updateLatentRecon() {
     if (!engine || sessionBusy) return;
     sessionBusy = true;
-    try {
-        const startTime = performance.now();
-        let latent: Float32Array;
+    const pixels = getPixelsFromCanvas(inputCtx);
+    const encStart = performance.now();
+    const latent = await engine.encode(pixels);
+    const encEnd = performance.now();
 
-        if (pixels) {
-            const encStart = performance.now();
-            latent = await engine.encode(pixels);
-            const encEnd = performance.now();
-            encTimeEl.textContent = `${(encEnd - encStart).toFixed(1)} ms`;
-            setSourceLatent(latent);
-        } else {
-            encTimeEl.textContent = '';
-            latent = new Float32Array(LATENT_DIM);
-            let sumSq = 0;
-            for (let i = 0; i < LATENT_DIM; i++) {
-                const z = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
-                latent[i] = z;
-                sumSq += z * z;
-            }
-            const norm = Math.sqrt(sumSq);
-            const radius = Math.sqrt(LATENT_DIM);
-            for (let i = 0; i < LATENT_DIM; i++) latent[i] = (latent[i] / norm) * radius;
-            setSourceLatent(latent);
-        }
+    encTimeEl.textContent = `${(encEnd - encStart).toFixed(1)}ms (Enc)`;
+    setSourceLatent(latent);
 
-        const output = await engine.decode(latent);
-        const endTime = performance.now();
-        genTimeEl.textContent = `${(endTime - startTime).toFixed(1)} ms`;
-        drawToCanvas(outputCtx, output);
-    } finally {
-        sessionBusy = false;
-    }
+    const decStart = performance.now();
+    const output = await engine.decode(latent);
+    const decEnd = performance.now();
+    drawToCanvas(outputCtx, output);
+    genTimeEl.textContent = `${(decEnd - decStart).toFixed(1)}ms (Dec)`;
+
+    sessionBusy = false;
 }
 
-async function masterLoop() {
-    const dx = targetInterpX - currentInterpX;
-    const dy = targetInterpY - currentInterpY;
-    const interpMoved = Math.abs(dx) > 0.0001 || Math.abs(dy) > 0.0001;
-
-    if (interpMoved) {
-        currentInterpX += dx * 0.1;
-        currentInterpY += dy * 0.1;
-        interpCursor.style.left = `${currentInterpX * 100}%`;
-        interpCursor.style.top = `${currentInterpY * 100}%`;
-    }
-
-    if (!sessionBusy && engine) {
-        if (interpMoved || pendingInterpolation) {
-            pendingInterpolation = false;
-            await runInterpolationUpdate();
-        } else if (isRoaming && sourceLatent) {
-            await runRoamFrame();
-        } else if (isLooping) {
-            await runInference();
-        }
-    }
-    requestAnimationFrame(masterLoop);
-}
-
-async function runRoamFrame() {
-    if (!sourceLatent || !engine) return;
+async function randomizeLatent() {
+    if (!engine || sessionBusy) return;
     sessionBusy = true;
-    try {
-        const startTime = performance.now();
-        const angle = startTime * 0.001 * parseFloat(speedSlider.value);
-        const length = parseFloat(lengthSlider.value);
-        const radius = Math.sqrt(LATENT_DIM);
-
-        const morphed = new Float32Array(LATENT_DIM);
-        let sumSq = 0;
-        const cosL = Math.cos(length);
-        const sinL = Math.sin(length);
-        const cosA = Math.cos(angle);
-        const sinA = Math.sin(angle);
-
-        for (let i = 0; i < LATENT_DIM; i++) {
-            const val = sourceLatent[i] * cosL + (orbitA[i] * cosA + orbitB[i] * sinA) * sinL;
-            morphed[i] = val;
-            sumSq += val * val;
-        }
-
-        const norm = Math.sqrt(sumSq);
-        for (let i = 0; i < LATENT_DIM; i++) morphed[i] = (morphed[i] / norm) * radius;
-
-        const output = await engine.decode(morphed);
-        genTimeEl.textContent = `${(performance.now() - startTime).toFixed(1)} ms`;
-        drawToCanvas(outputCtx, output);
-    } finally {
-        sessionBusy = false;
+    const latent = new Float32Array(LATENT_DIM);
+    let sumSq = 0;
+    for (let i = 0; i < LATENT_DIM; i++) {
+        const z = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
+        latent[i] = z;
+        sumSq += z * z;
     }
-}
+    const norm = Math.sqrt(sumSq);
+    const radius = Math.sqrt(LATENT_DIM);
+    for (let i = 0; i < LATENT_DIM; i++) latent[i] = (latent[i] / norm) * radius;
 
-async function runInterpolationUpdate() {
-    if (!engine) return;
-    sessionBusy = true;
-    try {
-        const x = currentInterpX;
-        const y = currentInterpY;
-        const interpolated = new Float32Array(LATENT_DIM);
-        let sumSq = 0;
-        for (let i = 0; i < LATENT_DIM; i++) {
-            const top = (1 - x) * cornerLatents[0][i] + x * cornerLatents[1][i];
-            const bottom = (1 - x) * cornerLatents[2][i] + x * cornerLatents[3][i];
-            const val = (1 - y) * top + y * bottom;
-            interpolated[i] = val;
-            sumSq += val * val;
-        }
-        const norm = Math.sqrt(sumSq);
-        const radius = Math.sqrt(LATENT_DIM);
-        for (let i = 0; i < LATENT_DIM; i++) interpolated[i] = (interpolated[i] / norm) * radius;
-
-        const output = await engine.decode(interpolated);
-        drawToCanvas(interpResultCtx, output);
-    } finally {
-        sessionBusy = false;
-    }
-}
-
-sampleBtn.addEventListener('click', () => runInference());
-reconstructBtn.addEventListener('click', () => runInference(getPixelsFromCanvas(inputCtx)));
-loopToggle.addEventListener('change', () => isLooping = loopToggle.checked);
-roamToggle.addEventListener('change', () => isRoaming = roamToggle.checked);
-uploadBtn.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (!file) return;
-    const img = new Image();
-    img.onload = () => {
-        drawImageCenterCrop(inputCtx, img);
-        runInference(getPixelsFromCanvas(inputCtx));
-    };
-    img.src = URL.createObjectURL(file);
-});
-
-async function fetchRandomFlowerImage(exclude: number[] = []): Promise<{ img: HTMLImageElement, idx: number }> {
-    let idx: number;
-    do { idx = Math.floor(Math.random() * 10) + 1; } while (exclude.includes(idx));
-    const url = `/images/flower (${idx}).jpg`;
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.onload = () => resolve({ img, idx });
-        img.onerror = reject;
-        img.src = url;
-    });
-}
-
-async function fetchAndEncodeCorner(i: number) {
-    const exclude = currentCornerIndices.filter((_, index) => index !== i);
-    const { img, idx } = await fetchRandomFlowerImage(exclude);
-    currentCornerIndices[i] = idx;
-    drawImageCenterCrop(cornerCtxs[i], img);
-    cornerLatents[i] = await engine!.encode(getPixelsFromCanvas(cornerCtxs[i]));
+    setSourceLatent(latent);
+    const start = performance.now();
+    const output = await engine.decode(latent);
+    const end = performance.now();
+    drawToCanvas(outputCtx, output);
+    genTimeEl.textContent = `${(end - start).toFixed(1)}ms`;
+    sessionBusy = false;
 }
 
 async function setupInterpolationCorners() {
-    for (let i = 0; i < 4; i++) await fetchAndEncodeCorner(i);
+    if (!engine) return;
+    for (let i = 0; i < 4; i++) {
+        const latent = new Float32Array(LATENT_DIM);
+        let sumSq = 0;
+        for (let j = 0; j < LATENT_DIM; j++) {
+            const z = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
+            latent[j] = z;
+            sumSq += z * z;
+        }
+        const norm = Math.sqrt(sumSq);
+        const radius = Math.sqrt(LATENT_DIM);
+        for (let j = 0; j < LATENT_DIM; j++) latent[j] = (latent[j] / norm) * radius;
+
+        cornerLatents[i] = latent;
+        const output = await engine.decode(latent);
+        drawToCanvas(cornerCtxs[i], output);
+    }
+    pendingInterpolation = true;
 }
 
+async function runInterpolation(x: number, y: number) {
+    if (!engine || sessionBusy) return;
+    sessionBusy = true;
+
+    const latent = new Float32Array(LATENT_DIM);
+    const wTL = (1 - x) * (1 - y);
+    const wTR = x * (1 - y);
+    const wBL = (1 - x) * y;
+    const wBR = x * y;
+
+    let sumSq = 0;
+    for (let i = 0; i < LATENT_DIM; i++) {
+        const val = cornerLatents[0][i] * wTL + cornerLatents[1][i] * wTR + cornerLatents[2][i] * wBL + cornerLatents[3][i] * wBR;
+        latent[i] = val;
+        sumSq += val * val;
+    }
+    const norm = Math.sqrt(sumSq);
+    const radius = Math.sqrt(LATENT_DIM);
+    for (let i = 0; i < LATENT_DIM; i++) latent[i] = (latent[i] / norm) * radius;
+
+    const output = await engine.decode(latent);
+    drawToCanvas(interpResultCtx, output);
+    sessionBusy = false;
+    pendingInterpolation = false;
+}
+
+async function masterLoop() {
+    const loop = async () => {
+        if (!engine) { requestAnimationFrame(loop); return; }
+
+        if (isLooping || isRoaming) {
+            if (!sessionBusy) {
+                let latent: Float32Array;
+                if (isRoaming && sourceLatent) {
+                    const time = performance.now() * 0.001 * parseFloat(speedSlider.value);
+                    const length = parseFloat(lengthSlider.value);
+                    latent = new Float32Array(LATENT_DIM);
+                    let sumSq = 0;
+                    for (let i = 0; i < LATENT_DIM; i++) {
+                        const val = sourceLatent[i] + length * (orbitA[i] * Math.cos(time) + orbitB[i] * Math.sin(time));
+                        latent[i] = val;
+                        sumSq += val * val;
+                    }
+                    const norm = Math.sqrt(sumSq);
+                    const radius = Math.sqrt(LATENT_DIM);
+                    for (let i = 0; i < LATENT_DIM; i++) latent[i] = (latent[i] / norm) * radius;
+                } else {
+                    latent = new Float32Array(LATENT_DIM);
+                    for (let i = 0; i < LATENT_DIM; i++) latent[i] = Math.sqrt(-2 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2 * Math.PI * Math.random());
+                    const norm = Math.sqrt(latent.reduce((a, b) => a + b * b, 0));
+                    const radius = Math.sqrt(LATENT_DIM);
+                    for (let i = 0; i < LATENT_DIM; i++) latent[i] = (latent[i] / norm) * radius;
+                }
+
+                sessionBusy = true;
+                const output = await engine.decode(latent);
+                drawToCanvas(outputCtx, output);
+                sessionBusy = false;
+            }
+        }
+
+        if (pendingInterpolation || Math.abs(currentInterpX - targetInterpX) > 0.01 || Math.abs(currentInterpY - targetInterpY) > 0.01) {
+            currentInterpX += (targetInterpX - currentInterpX) * 0.1;
+            currentInterpY += (targetInterpY - currentInterpY) * 0.1;
+            interpCursor.style.left = `${currentInterpX * 100}%`;
+            interpCursor.style.top = `${currentInterpY * 100}%`;
+            await runInterpolation(currentInterpX, currentInterpY);
+        }
+
+        requestAnimationFrame(loop);
+    };
+    loop();
+}
+
+sampleBtn.addEventListener('click', randomizeLatent);
+reconstructBtn.addEventListener('click', updateLatentRecon);
+randomizeInterp.addEventListener('click', setupInterpolationCorners);
+
+loopToggle.addEventListener('change', () => { isLooping = loopToggle.checked; });
+roamToggle.addEventListener('change', () => { isRoaming = roamToggle.checked; });
+
+uploadBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = (re) => {
+            const img = new Image();
+            img.onload = () => {
+                drawImageCenterCrop(inputCtx, img);
+                updateLatentRecon();
+            };
+            img.src = re.target?.result as string;
+        };
+        reader.readAsDataURL(file);
+    }
+});
+
 const modelSelect = document.getElementById('modelSelect') as HTMLSelectElement;
+const quantSelect = document.getElementById('quantSelect') as HTMLSelectElement;
+
 if (modelSelect) {
     modelSelect.addEventListener('change', () => {
         MODEL_PATH = `models/${modelSelect.value}`;
@@ -331,34 +317,28 @@ if (modelSelect) {
         init();
     });
     MODEL_PATH = `models/${modelSelect.value}`;
-    console.log(`Initial model path from select: ${MODEL_PATH}`);
 }
 
-init();
+if (quantSelect) {
+    quantSelect.addEventListener('change', () => {
+        console.log(`Quantization changed to: ${quantSelect.value}`);
+        init();
+    });
+}
 
 interpPad.addEventListener('mousedown', (e) => {
-    handlePadInteraction(e);
-    const onMouseMove = (moveEvent: MouseEvent) => handlePadInteraction(moveEvent);
-    const onMouseUp = () => {
-        window.removeEventListener('mousemove', onMouseMove);
-        window.removeEventListener('mouseup', onMouseUp);
-    };
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-});
-
-randomizeInterp.addEventListener('click', () => setupInterpolationCorners().then(() => pendingInterpolation = true));
-cornerCtxs.forEach((ctx, i) => {
-    ctx.canvas.addEventListener('click', () => {
-        if (!sessionBusy) fetchAndEncodeCorner(i).then(() => pendingInterpolation = true);
-    });
-    ctx.canvas.style.cursor = 'pointer';
-});
-
-function handlePadInteraction(e: MouseEvent | TouchEvent) {
     const rect = interpPad.getBoundingClientRect();
-    const cx = ('touches' in e) ? e.touches[0].clientX : e.clientX;
-    const cy = ('touches' in e) ? e.touches[0].clientY : e.clientY;
-    targetInterpX = Math.max(0, Math.min(1, (cx - rect.left) / rect.width));
-    targetInterpY = Math.max(0, Math.min(1, (cy - rect.top) / rect.height));
-}
+    const update = (me: MouseEvent) => {
+        targetInterpX = Math.max(0, Math.min(1, (me.clientX - rect.left) / rect.width));
+        targetInterpY = Math.max(0, Math.min(1, (me.clientY - rect.top) / rect.height));
+    };
+    const up = () => {
+        window.removeEventListener('mousemove', update);
+        window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', update);
+    window.addEventListener('mouseup', up);
+    update(e);
+});
+
+init();

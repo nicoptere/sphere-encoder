@@ -1,28 +1,61 @@
 
-// WebGPU Kernels for Sphere Encoder Decoder
+// WebGPU Kernels for Sphere Encoder with Dequantization Support
+
+export const DEQUANT_HELPERS = `
+fn get_weight_f32(idx: u32, scale: f32, mode: u32) -> f32 {
+    // mode: 0=f32, 1=f16, 2=q8, 3=q4
+    if (mode == 0u) {
+        return bitcast<f32>(weights_u32[idx]);
+    } else if (mode == 1u) {
+        // f16: weights_u32 is array<u32>, each contains two f16
+        // actually give me vec2<f32>(f16_low, f16_high)
+        let word = weights_u32[idx / 2u];
+        let unpacked = unpack2x16float(word);
+        return select(unpacked.x, unpacked.y, idx % 2u == 1u);
+    } else if (mode == 2u) {
+        // q8: weights_u32 is array<u32>, each contains 4 int8
+        let word = weights_u32[idx / 4u];
+        let byte_idx = idx % 4u;
+        let val_u8 = (word >> (byte_idx * 8u)) & 0xFFu;
+        let val_i8 = select(i32(val_u8), i32(val_u8) - 256, val_u8 >= 128u);
+        return f32(val_i8) * scale;
+    } else if (mode == 3u) {
+        // q4: weights_u32 is array<u32>, each contains 8 nibbles
+        let byte_idx = idx / 2u;
+        let word = weights_u32[byte_idx / 4u];
+        let b = (word >> ((byte_idx % 4u) * 8u)) & 0xFFu;
+        let nibble = select(b & 0xFu, b >> 4u, idx % 2u == 1u);
+        return (f32(nibble) - 8.0) * scale;
+    }
+    return 0.0;
+}
+`;
 
 export const LINEAR_WGSL = `
 struct Params {
     in_features: u32,
     out_features: u32,
+    weight_scale: f32,
+    weight_mode: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> input: array<f32>;
-@group(0) @binding(2) var<storage, read> weights: array<f32>;
+@group(0) @binding(2) var<storage, read> weights_u32: array<u32>;
 @group(0) @binding(3) var<storage, read> bias: array<f32>;
 @group(0) @binding(4) var<storage, read_write> output: array<f32>;
+
+${DEQUANT_HELPERS}
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let row = global_id.x;
-    if (row >= params.out_features) {
-        return;
-    }
+    if (row >= params.out_features) { return; }
 
     var sum: f32 = bias[row];
     for (var i: u32 = 0u; i < params.in_features; i = i + 1u) {
-        sum = sum + input[i] * weights[row * params.in_features + i];
+        let w = get_weight_f32(row * params.in_features + i, params.weight_scale, params.weight_mode);
+        sum = sum + input[i] * w;
     }
     output[row] = sum;
 }
@@ -37,13 +70,17 @@ struct Params {
     kernel_size: u32,
     stride: u32,
     padding: u32,
+    weight_scale: f32,
+    weight_mode: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> input: array<f32>;     // (In, H, W)
-@group(0) @binding(2) var<storage, read> weights: array<f32>;   // (In, Out, K, K)
-@group(0) @binding(3) var<storage, read> bias: array<f32>;      // (Out)
-@group(0) @binding(4) var<storage, read_write> output: array<f32>; // (Out, H', W')
+@group(0) @binding(1) var<storage, read> input: array<f32>;
+@group(0) @binding(2) var<storage, read> weights_u32: array<u32>;
+@group(0) @binding(3) var<storage, read> bias: array<f32>;
+@group(0) @binding(4) var<storage, read_write> output: array<f32>;
+
+${DEQUANT_HELPERS}
 
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -51,34 +88,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let out_y = global_id.y;
     let out_c = global_id.z;
 
-    if (out_x >= params.out_size || out_y >= params.out_size || out_c >= params.out_channels) {
-        return;
-    }
+    if (out_x >= params.out_size || out_y >= params.out_size || out_c >= params.out_channels) { return; }
 
     var sum: f32 = bias[out_c];
-
-    // ConvTranspose logic:
-    // For each output pixel (out_x, out_y), iterate over possible input pixels (in_x, in_y)
-    // and kernel positions (k_x, k_y) that contribute to it.
-    // output[out_x, out_y] = sum over in_x, in_y: input[in_x, in_y] * weights[in_c, out_c, k_x, k_y]
-    // where out_x = in_x * stride + k_x - padding
-    // so k_x = out_x + padding - in_x * stride
-    
     let k_size = params.kernel_size;
     let stride = params.stride;
     let padding = params.padding;
     let in_size = params.in_size;
 
     for (var in_c: u32 = 0u; in_c < params.in_channels; in_c = in_c + 1u) {
-        // Bounds for in_x that could contribute to out_x
-        // in_x * stride <= out_x + padding
-        // in_x * stride + k_size - 1 >= out_x + padding
-        
-        // Start and end in_x search range
-        // let start_in_x = max(0, (out_x + padding - k_size + 1 + stride - 1) / stride)
-        // let end_in_x = min(in_size - 1, (out_x + padding) / stride)
-        
-        // Simplified loop: iterate over kernel, find if valid input exists
         for (var ky: u32 = 0u; ky < k_size; ky = ky + 1u) {
             let py = out_y + padding;
             if (py < ky) { continue; }
@@ -98,7 +116,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let input_idx = (in_c * in_size + in_y) * in_size + in_x;
                 let weight_idx = (((in_c * params.out_channels + out_c) * k_size + ky) * k_size) + kx;
                 
-                sum = sum + input[input_idx] * weights[weight_idx];
+                let w = get_weight_f32(weight_idx, params.weight_scale, params.weight_mode);
+                sum = sum + input[input_idx] * w;
             }
         }
     }
@@ -117,13 +136,17 @@ struct Params {
     kernel_size: u32,
     stride: u32,
     padding: u32,
+    weight_scale: f32,
+    weight_mode: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> input: array<f32>;     // (In, H, W)
-@group(0) @binding(2) var<storage, read> weights: array<f32>;   // (Out, In, K, K)
-@group(0) @binding(3) var<storage, read> bias: array<f32>;      // (Out)
-@group(0) @binding(4) var<storage, read_write> output: array<f32>; // (Out, H', W')
+@group(0) @binding(1) var<storage, read> input: array<f32>;
+@group(0) @binding(2) var<storage, read> weights_u32: array<u32>;
+@group(0) @binding(3) var<storage, read> bias: array<f32>;
+@group(0) @binding(4) var<storage, read_write> output: array<f32>;
+
+${DEQUANT_HELPERS}
 
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -131,9 +154,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let out_y = global_id.y;
     let out_c = global_id.z;
 
-    if (out_x >= params.out_size || out_y >= params.out_size || out_c >= params.out_channels) {
-        return;
-    }
+    if (out_x >= params.out_size || out_y >= params.out_size || out_c >= params.out_channels) { return; }
 
     var sum: f32 = bias[out_c];
     let k_size = params.kernel_size;
@@ -155,7 +176,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let input_idx = (in_c * in_size + real_in_y) * in_size + real_in_x;
                 let weight_idx = (((out_c * params.in_channels + in_c) * k_size + ky) * k_size) + kx;
                 
-                sum = sum + input[input_idx] * weights[weight_idx];
+                let w = get_weight_f32(weight_idx, params.weight_scale, params.weight_mode);
+                sum = sum + input[input_idx] * w;
             }
         }
     }
@@ -167,7 +189,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 export const LEAKY_RELU_WGSL = `
 @group(0) @binding(0) var<storage, read_write> data: array<f32>;
-
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
@@ -180,7 +201,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 export const RELU_WGSL = `
 @group(0) @binding(0) var<storage, read_write> data: array<f32>;
-
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
@@ -192,15 +212,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 export const TANH_WGSL = `
 @group(0) @binding(0) var<storage, read_write> data: array<f32>;
-
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
     if (idx < arrayLength(&data)) {
-        let x = data[idx];
-        // tanh(x) = (exp(2x) - 1) / (exp(2x) + 1)
-        // Handled by built-in tanh
-        data[idx] = tanh(x);
+        data[idx] = tanh(data[idx]);
     }
 }
 `;

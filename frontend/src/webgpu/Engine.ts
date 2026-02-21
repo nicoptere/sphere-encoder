@@ -14,72 +14,64 @@ export class WebGPUEngine {
     private decoderWeights: GPUBuffer[] = [];
     private decoderBiases: GPUBuffer[] = [];
 
-    // Pipelines
     private pipelines: Record<string, GPUComputePipeline> = {};
 
     constructor() { }
 
-    async init(modelPath: string) {
+    async init(modelPath: string, quantMode: string = "f32") {
         const adapter = await navigator.gpu.requestAdapter();
         if (!adapter) throw new Error("No WebGPU adapter found");
         this.device = await adapter.requestDevice();
 
         const loader = new WeightLoader();
-        await loader.load(modelPath);
+        await loader.load(modelPath, quantMode);
         this.metadata = loader.getMetadata();
 
         // Create Pipelines
-        this.pipelines['linear'] = this.device.createComputePipeline({
+        const createPipeline = (code: string) => this.device!.createComputePipeline({
             layout: 'auto',
-            compute: { module: this.device.createShaderModule({ code: LINEAR_WGSL }), entryPoint: 'main' }
-        });
-        this.pipelines['conv_transpose'] = this.device.createComputePipeline({
-            layout: 'auto',
-            compute: { module: this.device.createShaderModule({ code: CONV_TRANSPOSE_WGSL }), entryPoint: 'main' }
-        });
-        this.pipelines['conv2d'] = this.device.createComputePipeline({
-            layout: 'auto',
-            compute: { module: this.device.createShaderModule({ code: CONV2D_WGSL }), entryPoint: 'main' }
-        });
-        this.pipelines['relu'] = this.device.createComputePipeline({
-            layout: 'auto',
-            compute: { module: this.device.createShaderModule({ code: RELU_WGSL }), entryPoint: 'main' }
-        });
-        this.pipelines['leaky_relu'] = this.device.createComputePipeline({
-            layout: 'auto',
-            compute: { module: this.device.createShaderModule({ code: LEAKY_RELU_WGSL }), entryPoint: 'main' }
-        });
-        this.pipelines['tanh'] = this.device.createComputePipeline({
-            layout: 'auto',
-            compute: { module: this.device.createShaderModule({ code: TANH_WGSL }), entryPoint: 'main' }
+            compute: { module: this.device!.createShaderModule({ code }), entryPoint: 'main' }
         });
 
-        // Initialize Encoder Buffers
+        this.pipelines['linear'] = createPipeline(LINEAR_WGSL);
+        this.pipelines['conv_transpose'] = createPipeline(CONV_TRANSPOSE_WGSL);
+        this.pipelines['conv2d'] = createPipeline(CONV2D_WGSL);
+        this.pipelines['relu'] = createPipeline(RELU_WGSL);
+        this.pipelines['leaky_relu'] = createPipeline(LEAKY_RELU_WGSL);
+        this.pipelines['tanh'] = createPipeline(TANH_WGSL);
+
+        // Clear existing buffers
+        this.encoderWeights = []; this.encoderBiases = [];
+        this.decoderWeights = []; this.decoderBiases = [];
+
         for (const layer of this.metadata.encoder_layers) {
-            const { w, b } = this.createWeightBuffers(loader, layer);
+            const { w, b } = this.createBuffers(loader, layer);
             this.encoderWeights.push(w);
             this.encoderBiases.push(b);
         }
 
-        // Initialize Decoder Buffers
         for (const layer of this.metadata.decoder_layers) {
-            const { w, b } = this.createWeightBuffers(loader, layer);
+            const { w, b } = this.createBuffers(loader, layer);
             this.decoderWeights.push(w);
             this.decoderBiases.push(b);
         }
     }
 
-    private createWeightBuffers(loader: WeightLoader, layer: LayerMeta) {
+    private createBuffers(loader: WeightLoader, layer: LayerMeta) {
         if (!this.device) throw new Error("No device");
-        const wData = loader.getWeightData(layer.weight_offset, layer.weight_size);
-        const bData = loader.getWeightData(layer.bias_offset, layer.bias_size);
 
+        const wData = loader.getWeightData(layer.weight_offset, layer.weight_size);
+        const bData = loader.getBiasData(layer.bias_offset, layer.bias_size);
+
+        // Pad weight buffer to multiple of 4 bytes for storage/u32 access
+        const paddedWSize = (wData.byteLength + 3) & ~3;
         const w = this.device.createBuffer({
-            size: wData.byteLength,
+            size: paddedWSize,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
             mappedAtCreation: true
         });
-        new Float32Array(w.getMappedRange()).set(wData);
+        const wMapped = w.getMappedRange();
+        new Uint8Array(wMapped).set(new Uint8Array(wData));
         w.unmap();
 
         const b = this.device.createBuffer({
@@ -93,6 +85,16 @@ export class WebGPUEngine {
         return { w, b };
     }
 
+    private getModeEnum(mode: string): number {
+        switch (mode) {
+            case "f32": return 0;
+            case "f16": return 1;
+            case "q8": return 2;
+            case "q4": return 3;
+            default: return 0;
+        }
+    }
+
     async encode(pixels: Float32Array): Promise<Float32Array> {
         if (!this.device || !this.metadata) throw new Error("Engine not initialized");
 
@@ -104,8 +106,9 @@ export class WebGPUEngine {
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
         });
         this.device.queue.writeBuffer(inputBuffer, 0, pixels);
-
         let currentInput = inputBuffer;
+
+        const modeEnum = this.getModeEnum(this.metadata.quant_mode);
 
         for (let i = 0; i < this.metadata.encoder_layers.length; i++) {
             const layer = this.metadata.encoder_layers[i];
@@ -118,29 +121,35 @@ export class WebGPUEngine {
             } else if (layer.type === 'linear') {
                 outSize = 1;
                 pipeline = this.pipelines['linear'];
-            } else {
-                continue;
-            }
+            } else continue;
 
-            const outputByteSize = (layer.out_channels || layer.out_features!) * outSize * outSize * 4;
+            const outCount = (layer.out_channels || layer.out_features!) * outSize * outSize;
             const outputBuffer = this.device.createBuffer({
-                size: outputByteSize,
+                size: outCount * 4,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
             });
 
-            // Params
-            const paramData = new Uint32Array(8);
+            // Params: in, out, inSize, outSize, k, s, p, scale, mode (9 values)
+            // But uniforms usually want alignment. 10 floats/uints is fine.
+            const paramData = new ArrayBuffer(40);
+            const u32 = new Uint32Array(paramData);
+            const f32 = new Float32Array(paramData);
+
             if (layer.type === 'conv2d') {
-                paramData[0] = layer.in_channels!;
-                paramData[1] = layer.out_channels!;
-                paramData[2] = currentSize;
-                paramData[3] = outSize;
-                paramData[4] = layer.kernel_size!;
-                paramData[5] = layer.stride!;
-                paramData[6] = layer.padding!;
+                u32[0] = layer.in_channels!;
+                u32[1] = layer.out_channels!;
+                u32[2] = currentSize;
+                u32[3] = outSize;
+                u32[4] = layer.kernel_size!;
+                u32[5] = layer.stride!;
+                u32[6] = layer.padding!;
+                f32[7] = layer.weight_scale;
+                u32[8] = modeEnum;
             } else {
-                paramData[0] = layer.in_features!;
-                paramData[1] = layer.out_features!;
+                u32[0] = layer.in_features!;
+                u32[1] = layer.out_features!;
+                f32[2] = layer.weight_scale;
+                u32[3] = modeEnum;
             }
 
             const paramBuffer = this.device.createBuffer({
@@ -163,23 +172,18 @@ export class WebGPUEngine {
             const pass = commandEncoder.beginComputePass();
             pass.setPipeline(pipeline);
             pass.setBindGroup(0, bindGroup);
-            if (layer.type === 'conv2d') {
-                pass.dispatchWorkgroups(Math.ceil(outSize / 8), Math.ceil(outSize / 8), layer.out_channels!);
-            } else {
-                pass.dispatchWorkgroups(Math.ceil(layer.out_features! / 64));
-            }
+            if (layer.type === 'conv2d') pass.dispatchWorkgroups(Math.ceil(outSize / 8), Math.ceil(outSize / 8), layer.out_channels!);
+            else pass.dispatchWorkgroups(Math.ceil(layer.out_features! / 64));
             pass.end();
 
             if (layer.activation === 'leaky_relu') {
-                const actPipeline = this.pipelines['leaky_relu'];
-                const actBindGroup = this.device.createBindGroup({
-                    layout: actPipeline.getBindGroupLayout(0),
-                    entries: [{ binding: 0, resource: { buffer: outputBuffer } }]
-                });
                 const actPass = commandEncoder.beginComputePass();
-                actPass.setPipeline(actPipeline);
-                actPass.setBindGroup(0, actBindGroup);
-                actPass.dispatchWorkgroups(Math.ceil((outputByteSize / 4) / 64));
+                actPass.setPipeline(this.pipelines['leaky_relu']);
+                actPass.setBindGroup(0, this.device.createBindGroup({
+                    layout: this.pipelines['leaky_relu'].getBindGroupLayout(0),
+                    entries: [{ binding: 0, resource: { buffer: outputBuffer } }]
+                }));
+                actPass.dispatchWorkgroups(Math.ceil(outCount / 64));
                 actPass.end();
             }
 
@@ -187,10 +191,7 @@ export class WebGPUEngine {
             currentSize = outSize;
         }
 
-        const readBuffer = this.device.createBuffer({
-            size: currentInput.size,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-        });
+        const readBuffer = this.device.createBuffer({ size: currentInput.size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
         commandEncoder.copyBufferToBuffer(currentInput, 0, readBuffer, 0, currentInput.size);
         this.device.queue.submit([commandEncoder.finish()]);
 
@@ -204,15 +205,13 @@ export class WebGPUEngine {
         if (!this.device || !this.metadata) throw new Error("Engine not initialized");
 
         const commandEncoder = this.device.createCommandEncoder();
-        let currentSize = 4; // Model starts at 4x4 after Linear
+        let currentSize = 4;
 
-        const inputBuffer = this.device.createBuffer({
-            size: latent.byteLength,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
-        });
+        const inputBuffer = this.device.createBuffer({ size: latent.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
         this.device.queue.writeBuffer(inputBuffer, 0, latent);
-
         let currentInput = inputBuffer;
+
+        const modeEnum = this.getModeEnum(this.metadata.quant_mode);
 
         for (let i = 0; i < this.metadata.decoder_layers.length; i++) {
             const layer = this.metadata.decoder_layers[i];
@@ -220,39 +219,41 @@ export class WebGPUEngine {
             let pipeline: GPUComputePipeline;
 
             if (layer.type === 'linear') {
-                outSize = 4; // Reshaped to (C, 4, 4)
+                outSize = 4;
                 pipeline = this.pipelines['linear'];
             } else if (layer.type === 'conv_transpose') {
                 outSize = currentSize * 2;
                 pipeline = this.pipelines['conv_transpose'];
-            } else {
-                continue;
-            }
+            } else continue;
 
-            const outputByteSize = (layer.out_channels || layer.out_features!) * outSize * outSize * 4;
+            const outCount = (layer.out_channels || layer.out_features!) * outSize * outSize;
             const outputBuffer = this.device.createBuffer({
-                size: outputByteSize,
+                size: outCount * 4,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
             });
 
-            const paramData = new Uint32Array(8);
+            const paramData = new ArrayBuffer(40);
+            const u32 = new Uint32Array(paramData);
+            const f32 = new Float32Array(paramData);
+
             if (layer.type === 'linear') {
-                paramData[0] = layer.in_features!;
-                paramData[1] = layer.out_features!;
+                u32[0] = layer.in_features!;
+                u32[1] = layer.out_features!;
+                f32[2] = layer.weight_scale;
+                u32[3] = modeEnum;
             } else {
-                paramData[0] = layer.in_channels!;
-                paramData[1] = layer.out_channels!;
-                paramData[2] = currentSize;
-                paramData[3] = outSize;
-                paramData[4] = layer.kernel_size!;
-                paramData[5] = layer.stride!;
-                paramData[6] = layer.padding!;
+                u32[0] = layer.in_channels!;
+                u32[1] = layer.out_channels!;
+                u32[2] = currentSize;
+                u32[3] = outSize;
+                u32[4] = layer.kernel_size!;
+                u32[5] = layer.stride!;
+                u32[6] = layer.padding!;
+                f32[7] = layer.weight_scale;
+                u32[8] = modeEnum;
             }
 
-            const paramBuffer = this.device.createBuffer({
-                size: paramData.byteLength,
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-            });
+            const paramBuffer = this.device.createBuffer({ size: paramData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
             this.device.queue.writeBuffer(paramBuffer, 0, paramData);
 
             const bindGroup = this.device.createBindGroup({
@@ -269,23 +270,18 @@ export class WebGPUEngine {
             const pass = commandEncoder.beginComputePass();
             pass.setPipeline(pipeline);
             pass.setBindGroup(0, bindGroup);
-            if (layer.type === 'linear') {
-                pass.dispatchWorkgroups(Math.ceil(layer.out_features! / 64));
-            } else {
-                pass.dispatchWorkgroups(Math.ceil(outSize / 8), Math.ceil(outSize / 8), layer.out_channels!);
-            }
+            if (layer.type === 'linear') pass.dispatchWorkgroups(Math.ceil(layer.out_features! / 64));
+            else pass.dispatchWorkgroups(Math.ceil(outSize / 8), Math.ceil(outSize / 8), layer.out_channels!);
             pass.end();
 
             if (layer.activation === 'relu' || layer.activation === 'tanh') {
-                const actPipeline = this.pipelines[layer.activation];
-                const actBindGroup = this.device.createBindGroup({
-                    layout: actPipeline.getBindGroupLayout(0),
-                    entries: [{ binding: 0, resource: { buffer: outputBuffer } }]
-                });
                 const actPass = commandEncoder.beginComputePass();
-                actPass.setPipeline(actPipeline);
-                actPass.setBindGroup(0, actBindGroup);
-                actPass.dispatchWorkgroups(Math.ceil((outputByteSize / 4) / 64));
+                actPass.setPipeline(this.pipelines[layer.activation]);
+                actPass.setBindGroup(0, this.device.createBindGroup({
+                    layout: this.pipelines[layer.activation].getBindGroupLayout(0),
+                    entries: [{ binding: 0, resource: { buffer: outputBuffer } }]
+                }));
+                actPass.dispatchWorkgroups(Math.ceil(outCount / 64));
                 actPass.end();
             }
 
@@ -293,10 +289,7 @@ export class WebGPUEngine {
             currentSize = outSize;
         }
 
-        const readBuffer = this.device.createBuffer({
-            size: currentInput.size,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-        });
+        const readBuffer = this.device.createBuffer({ size: currentInput.size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
         commandEncoder.copyBufferToBuffer(currentInput, 0, readBuffer, 0, currentInput.size);
         this.device.queue.submit([commandEncoder.finish()]);
 
