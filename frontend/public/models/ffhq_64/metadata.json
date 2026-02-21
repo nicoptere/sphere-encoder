@@ -1,0 +1,7 @@
+{
+    "dataset": "ffhq_64",
+    "latent_dim": 512,
+    "image_size": 128,
+    "channels": 3,
+    "model_type": "convnet"
+}

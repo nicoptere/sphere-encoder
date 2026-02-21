@@ -1,0 +1,7 @@
+{
+    "dataset": "cifar10",
+    "latent_dim": 512,
+    "image_size": 32,
+    "channels": 3,
+    "model_type": "convnet"
+}
