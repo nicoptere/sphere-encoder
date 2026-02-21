@@ -465,8 +465,52 @@ body {
 #status {
     text-align: center;
     color: $accent-blue;
-    font-size: 0.875rem;
-    min-height: 1.25rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.status-container {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 1rem;
+    background: rgba($card-bg, 0.5);
+    border-radius: 20px;
+    border: 1px solid rgba($accent-blue, 0.2);
+    min-width: 180px;
+    justify-content: center;
+
+    &.ready {
+        border-color: rgba($text-muted, 0.2);
+        background: transparent;
+
+        #status {
+            color: $text-secondary;
+        }
+
+        .throbber {
+            display: none;
+        }
+    }
+}
+
+.throbber {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba($accent-blue, 0.1);
+    border-top: 2px solid $accent-blue;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
 }
 
 hr {

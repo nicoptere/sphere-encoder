@@ -18,20 +18,23 @@
         <div class="selector-item">
           <label for="modelSelect">Model</label>
           <select id="modelSelect">
-            <option value="ffhq_64" selected>FFHQ (64x64)</option>
-            <option value="cifar10">CIFAR-10 (32x32)</option>
-            <option value="flowers102">Flowers-102 (256x256)</option>
+            <option value="ffhq_64">FFHQ (64x64)</option>
+            <option value="cifar10" selected>CIFAR-10 (32x32)</option>
           </select>
         </div>
         <div class="selector-item">
           <label for="quantSelect">Quantization</label>
           <select id="quantSelect">
             <option value="f32">FP32 (Original)</option>
-            <option value="f16" selected>FP16 (Half)</option>
-            <option value="q8">INT8 (8-bit)</option>
+            <option value="f16">FP16 (Half)</option>
+            <option value="q8" selected>INT8 (8-bit)</option>
             <option value="q4">INT4 (4-bit)</option>
           </select>
         </div>
+      </div>
+      <div class="status-container">
+        <div id="throbber" class="throbber"></div>
+        <div id="status">Loading models...</div>
       </div>
     </header>
 
@@ -92,7 +95,6 @@
       </main>
     </section>
 
-    <div id="status">Loading models...</div>
 
     <hr>
 

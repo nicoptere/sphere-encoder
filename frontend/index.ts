@@ -3,7 +3,7 @@ import { WebGPUEngine } from './src/webgpu/Engine';
 
 let LATENT_DIM = 512;
 let IMAGE_SIZE = 32;
-let MODEL_PATH = 'models/ffhq_64';
+let MODEL_PATH = 'models/cifar10';
 
 let engine: WebGPUEngine | null = null;
 
@@ -68,7 +68,9 @@ let currentInterpX = 0.5;
 let currentInterpY = 0.5;
 
 async function init() {
+    const statusContainer = document.querySelector('.status-container') as HTMLDivElement;
     try {
+        statusContainer.classList.remove('ready');
         sessionBusy = true; // Block loops during engine swap
         const quantSelect = document.getElementById('quantSelect') as HTMLSelectElement;
         const quantMode = quantSelect?.value || 'f32';
@@ -100,6 +102,7 @@ async function init() {
         await setupInterpolationCorners();
 
         statusEl.textContent = 'Ready.';
+        statusContainer.classList.add('ready');
         sampleBtn.disabled = false;
         sessionBusy = false; // Unblock
 
@@ -111,6 +114,7 @@ async function init() {
         }
     } catch (e) {
         statusEl.textContent = 'Initialization error: ' + e;
+        statusContainer.classList.add('ready'); // Hide throbber on error too
         console.error(e);
         sessionBusy = false;
     }
