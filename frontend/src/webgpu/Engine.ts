@@ -19,8 +19,15 @@ export class WebGPUEngine {
     constructor() { }
 
     async init(modelPath: string, quantMode: string = "f32") {
+        if (!navigator.gpu) {
+            throw new Error(
+                "WebGPU is not supported by this browser or device. " +
+                "Ensure you are using a modern browser (Chrome 113+, Safari 17+, Edge 113+) " +
+                "and accessing the site via a SECURE CONTEXT (HTTPS or localhost)."
+            );
+        }
         const adapter = await navigator.gpu.requestAdapter();
-        if (!adapter) throw new Error("No WebGPU adapter found");
+        if (!adapter) throw new Error("No WebGPU adapter found. Your GPU might not support WebGPU, or it may be disabled in browser settings.");
         this.device = await adapter.requestDevice();
 
         const loader = new WeightLoader();
