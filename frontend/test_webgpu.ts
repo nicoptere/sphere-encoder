@@ -65,12 +65,16 @@ async function runDiagnostics() {
             return;
         }
 
-        // Adapter Info
-        const info = await adapter.requestAdapterInfo();
+        // Adapter Info (Handle modern sync 'info' and legacy async 'requestAdapterInfo')
+        let info: any = (adapter as any).info;
+        if (!info && typeof (adapter as any).requestAdapterInfo === 'function') {
+            info = await (adapter as any).requestAdapterInfo();
+        }
+
         adapterInfoEl.innerHTML = `
-            <div class="info-row"><span class="info-label">Vendor</span><span class="info-value">${info.vendor || 'Unknown'}</span></div>
-            <div class="info-row"><span class="info-label">Architecture</span><span class="info-value">${info.architecture || 'Unknown'}</span></div>
-            <div class="info-row"><span class="info-label">Description</span><span class="info-value" style="font-size: 0.7rem">${info.description || 'Unknown'}</span></div>
+            <div class="info-row"><span class="info-label">Vendor</span><span class="info-value">${info?.vendor || 'Unknown'}</span></div>
+            <div class="info-row"><span class="info-label">Architecture</span><span class="info-value">${info?.architecture || 'Unknown'}</span></div>
+            <div class="info-row"><span class="info-label">Description</span><span class="info-value" style="font-size: 0.7rem">${info?.description || 'Unknown'}</span></div>
         `;
         document.getElementById('adapterCard')?.classList.add('success');
 
