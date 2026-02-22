@@ -1,0 +1,6 @@
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+numpy==1.26.4
+Pillow==12.1.0
+requests==2.32.5
+tqdm==4.67.3
