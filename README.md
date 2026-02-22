@@ -2,9 +2,17 @@
 
 Unofficial implementation of **[Image Generation with a Sphere Encoder](https://arxiv.org/abs/2602.15030)**.
 
-Official project page and code (when available): https://sphere-encoder.github.io/
+**Official project page** and code (when available): https://sphere-encoder.github.io/
 
     The Sphere Encoder is an efficient generative framework that produces high-quality images in a single forward pass. Unlike diffusion models that require many iterations, the Sphere Encoder maps images onto a spherical latent space and learns to decode them back. It achieves performance competitive with state-of-the-art diffusion models in as few as 1 to 4 steps.
+
+**try it out here:
+[LIVE DEMO ![app](./doc/app.jpg)](https://barradeau.com/2026/sphere-encoder/)**
+
+
+
+It uses a CIFAR10 trained for 285 epochs (batch 256, 200 steps per epoch) and a 64x64 FFHQ trained for 600 epochs (batch 128, 200 steps per epoch)
+each model has 4 quantization level (fp32 (original), fp16, int8, int4)
 
 **WARNING**: the project was made using Gemini, some important features, especially the latent dimension computation and multi-step reconstruction may be plain wrong, better wait for the official implementation :)
 
