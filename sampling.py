@@ -20,44 +20,57 @@ def load_image(path, size=32):
     return transform(image).unsqueeze(0)
 
 def sample(args):
-    config = Config()
-    device = config.device
-    
-    # Load Model
-    model = SphereEncoder(config).to(device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     checkpoint_path = args.checkpoint
     if checkpoint_path is None:
         # Try to find latest
         import glob
-        if not os.path.exists(config.checkpoint_dir):
-            print(f"Checkpoint directory {config.checkpoint_dir} does not exist.")
+        # We need a default to search checkpoints if not provided
+        search_dir = './checkpoints'
+        if not os.path.exists(search_dir):
+            print(f"Directory {search_dir} does not exist. Please specify --checkpoint.")
             return
 
-        files = glob.glob(os.path.join(config.checkpoint_dir, "checkpoint_*.pth"))
+        files = glob.glob(os.path.join(search_dir, "checkpoint_*.pth"))
         if files:
-            # Prefer checkpoint_latest if exists, else max time
-            latest = os.path.join(config.checkpoint_dir, "checkpoint_latest.pth")
-            if os.path.exists(latest):
-                checkpoint_path = latest
-            else:
-                checkpoint_path = max(files, key=os.path.getctime)
+            latest = os.path.join(search_dir, "checkpoint_latest.pth")
+            checkpoint_path = latest if os.path.exists(latest) else max(files, key=os.path.getctime)
         else:
             print("No checkpoint found.")
             return
 
     print(f"Loading checkpoint: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # Infer Config from Checkpoint
+    ckpt_config = checkpoint.get('config', {})
+    if isinstance(ckpt_config, dict):
+        config = Config(**ckpt_config)
+    else:
+        # If it's already a Config object or something else
+        config = ckpt_config
+    
+    # Ensure device is correct
+    config.device = device
+    
+    # Load Model with correct config
+    model = SphereEncoder(config).to(device)
     model.load_state_dict(checkpoint['state_dict'])
     model.eval()
     
-    steps_list = [1, 2, 4]
-    if args.steps != 1: # user specified something specific? 
-        # Actually user said "implement 1,2, 4 steps".
-        # If user passes --steps 10, maybe we just do 10?
-        # But for now let's default to [1, 2, 4] unless overridden?
-        # The parser default is 1. If user leaves default, we might execute [1, 2, 4]?
-        pass
+    # Determine Model Name for output folder
+    # Use parent directory name if available, otherwise filename without ext
+    abs_path = os.path.abspath(checkpoint_path)
+    parts = abs_path.split(os.sep)
+    if 'results' in parts:
+        model_name = parts[parts.index('results') + 1]
+    else:
+        model_name = os.path.splitext(os.path.basename(checkpoint_path))[0]
+    
+    output_dir = os.path.join(args.dest_folder, model_name)
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"Outputs will be saved to: {output_dir}")
 
     # Reconstruction Mode
     if args.input:
@@ -76,35 +89,45 @@ def sample(args):
             # Save Comparison
             grid = torch.cat(outputs, dim=0)
             grid = grid * 0.5 + 0.5
-            save_path = args.output.replace('.png', '_recon.png')
-            save_image(grid, save_path, nrow=4)
+            save_filename = os.path.basename(args.input).replace('.', '_recon.')
+            if not save_filename.endswith('.png'):
+                save_filename = os.path.splitext(save_filename)[0] + '.png'
+            
+            save_path = os.path.join(output_dir, save_filename)
+            # Stack vertically: nrow=1
+            save_image(grid, save_path, nrow=1)
             print(f"Saved comparison to {save_path}")
             
     else:
         # Generation Mode
-        print("Generating random samples...")
+        print(f"Generating {args.num_samples} random samples...")
         with torch.no_grad():
             z = torch.randn(args.num_samples, config.latent_dim, device=device)
-            z = torch.randn(args.num_samples, config.latent_dim, device=device)
             v = torch.nn.functional.normalize(z, p=2, dim=1)
-            # Fix: Scale to radius sqrt(L)
             v = v * math.sqrt(config.latent_dim)
             
+            all_steps = []
             for s in [1, 2, 4]:
                 print(f"Generating with {s} steps...")
                 generated = model.decode_multistep(v, steps=s)
                 generated = generated * 0.5 + 0.5
-                
-                save_path = args.output.replace('.png', f'_step_{s}.png')
-                save_image(generated, save_path, nrow=int(args.num_samples**0.5))
-                print(f"Saved samples to {save_path}")
+                all_steps.append(generated)
+            
+            # Combine all steps into one vertically stacked grid
+            # Each step is (num_samples, C, H, W)
+            # Cat on dim 0 gives (3 * num_samples, C, H, W)
+            # nrow=int(num_samples**0.5) keeps the original square grid per step, 
+            # but since they follow each other, they stack vertically.
+            full_grid = torch.cat(all_steps, dim=0)
+            save_path = os.path.join(output_dir, 'samples_multistep.png')
+            save_image(full_grid, save_path, nrow=int(args.num_samples**0.5))
+            print(f"Saved consolidated samples to {save_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to checkpoint file')
-    parser.add_argument('--output', type=str, default='sample.png', help='Output image path base name')
+    parser.add_argument('--dest_folder', type=str, default='samples', help='Parent directory for outputs')
     parser.add_argument('--num_samples', type=int, default=16, help='Number of samples to generate')
-    parser.add_argument('--steps', type=int, default=1, help='(Deprecated) Steps are now 1, 2, 4 by default')
     parser.add_argument('--input', type=str, default=None, help='Input image for reconstruction')
     args = parser.parse_args()
     sample(args)

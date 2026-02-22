@@ -3,9 +3,8 @@ import os
 from export_weights import export_model
 
 models = [
-    ('results/ffhq_64_20260220_183709/checkpoints/checkpoint_latest.pth', 'frontend/public/models/ffhq_64'),
     ('results/cifar10_20260219_182845/checkpoints/checkpoint_latest.pth', 'frontend/public/models/cifar10'),
-    ('results/flowers102_20260219_231347/checkpoints/checkpoint_latest.pth', 'frontend/public/models/flowers102')
+    ('results/ffhq_64_20260220_183709/checkpoints/checkpoint_latest.pth', 'frontend/public/models/ffhq_64')
 ]
 
 modes = ['f32', 'f16', 'q8', 'q4']
