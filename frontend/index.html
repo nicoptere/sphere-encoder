@@ -99,39 +99,37 @@
     <hr>
 
     <section class="interpolation-section">
-      <div class="pad-outer">
-        <div class="row">
-          <div>
-            <div class="corner-label">TL</div>
-            <canvas id="corner-tl" width="32" height="32" class="corner-canvas"></canvas>
+      <section class="controls">
+        <div class="pad-outer">
+          <div class="row">
+            <div>
+              <canvas id="corner-tl" width="32" height="32" class="corner-canvas"></canvas>
+            </div>
+            <div>
+              <canvas id="corner-tr" width="32" height="32" class="corner-canvas"></canvas>
+            </div>
           </div>
-          <div>
-            <div class="corner-label">TR</div>
-            <canvas id="corner-tr" width="32" height="32" class="corner-canvas"></canvas>
-          </div>
-        </div>
 
-        <div id="interpPad" class="interp-pad">
-          <div id="interpCursor" class="cursor"></div>
-          <div class="grid"></div>
-        </div>
+          <div id="interpPad" class="interp-pad">
+            <div id="interpCursor" class="cursor"></div>
+            <div class="grid"></div>
+          </div>
 
-        <div class="row">
-          <div>
-            <canvas id="corner-bl" width="32" height="32" class="corner-canvas"></canvas>
-            <div class="corner-label">BL</div>
-          </div>
-          <div>
-            <canvas id="corner-br" width="32" height="32" class="corner-canvas"></canvas>
-            <div class="corner-label">BR</div>
+          <div class="row">
+            <div>
+              <canvas id="corner-bl" width="32" height="32" class="corner-canvas"></canvas>
+            </div>
+            <div>
+              <canvas id="corner-br" width="32" height="32" class="corner-canvas"></canvas>
+            </div>
           </div>
         </div>
-      </div>
+        <button id="randomizeInterp">Randomize Corners</button>
+      </section>
 
       <div class="result-group">
         <div class="label">Latent Interpolation Result</div>
         <canvas id="interpResult" width="32" height="32"></canvas>
-        <button id="randomizeInterp" class="secondary">Randomize Corners</button>
       </div>
     </section>
   </div>

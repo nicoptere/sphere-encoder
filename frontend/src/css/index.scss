@@ -1,3 +1,4 @@
+@use "sass:color";
 // Variables
 $bg-color: #0f172a;
 $card-bg: #1e293b;
@@ -161,7 +162,7 @@ body {
 
     &:hover {
         transform: scale(1.02);
-        border-color: lighten($accent-blue, 10%);
+        border-color: color.adjust($accent-blue, $lightness: 10%);
     }
 }
 
@@ -197,7 +198,7 @@ body {
         transition: background 0.2s, transform 0.1s;
 
         &:hover:not(:disabled) {
-            background: darken($accent-blue, 10%);
+            background: color.adjust($accent-blue, $lightness: -10%);
             transform: translateY(-1px);
         }
 
@@ -274,6 +275,13 @@ body {
     @media (min-width: 768px) {
         flex-direction: row;
         justify-content: space-around;
+    }
+
+    .button {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        background-color: #3b82f6;
     }
 
     .pad-outer {
@@ -458,7 +466,7 @@ body {
 
     &:hover {
         transform: scale(1.02);
-        border-color: lighten($accent-blue, 10%);
+        border-color: color.adjust($accent-blue, $lightness: 10%);
     }
 }
 

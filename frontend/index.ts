@@ -1,4 +1,4 @@
-import './src/webgpu/css/index.scss';
+import './src/css/index.scss';
 import { WebGPUEngine } from './src/webgpu/Engine';
 
 let LATENT_DIM = 512;
@@ -66,6 +66,8 @@ let targetInterpX = 0.5;
 let targetInterpY = 0.5;
 let currentInterpX = 0.5;
 let currentInterpY = 0.5;
+
+let allSampleUrls: string[] = [];
 
 async function init() {
     const statusContainer = document.querySelector('.status-container') as HTMLDivElement;
@@ -207,9 +209,14 @@ async function randomizeLatent() {
 }
 
 async function setupInterpolationCorners() {
-    if (!engine) return;
+    if (!engine || allSampleUrls.length === 0) return;
+
+    // Pick 4 random unique samples
+    const shuffled = [...allSampleUrls].sort(() => 0.5 - Math.random());
+    const selected = shuffled.slice(0, 4);
+
     for (let i = 0; i < 4; i++) {
-        const url = `images/ffhq (${i + 1}).png`;
+        const url = selected[i];
         const img = new Image();
         await new Promise((resolve) => {
             img.onload = resolve;
@@ -371,8 +378,9 @@ async function handleImageUrl(url: string) {
 // Populate Thumbnails
 // Add FFHQ images
 for (let i = 1; i <= 10; i++) {
-    const img = document.createElement('img');
     const url = `images/ffhq (${i}).png`;
+    allSampleUrls.push(url);
+    const img = document.createElement('img');
     img.src = url;
     img.className = 'thumb';
     img.alt = `FFHQ ${i}`;
@@ -382,8 +390,9 @@ for (let i = 1; i <= 10; i++) {
 
 // Add Flower images
 for (let i = 1; i <= 10; i++) {
-    const img = document.createElement('img');
     const url = `images/flower (${i}).jpg`;
+    allSampleUrls.push(url);
+    const img = document.createElement('img');
     img.src = url;
     img.className = 'thumb';
     img.alt = `Flower ${i}`;
