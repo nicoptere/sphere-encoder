@@ -9,7 +9,7 @@
         "preview": "vite preview"
     },
     "devDependencies": {
-        "@vitejs/plugin-basic-ssl": "^2.1.4",
+        "@vitejs/plugin-basic-ssl": "^1.1.0",
         "sass-embedded": "^1.97.3",
         "typescript": "^5.2.2",
         "vite": "^5.0.0"
