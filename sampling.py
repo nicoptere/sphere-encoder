@@ -81,7 +81,7 @@ def sample(args):
             v = model.encode(original)
             
             outputs = [original]
-            for s in [1, 2, 4]:
+            for s in [1, 2, 3, 4]:
                 recon = model.decode_multistep(v, steps=s)
                 outputs.append(recon)
                 print(f"Reconstructed with {s} steps.")
@@ -89,13 +89,15 @@ def sample(args):
             # Save Comparison
             grid = torch.cat(outputs, dim=0)
             grid = grid * 0.5 + 0.5
-            save_filename = os.path.basename(args.input).replace('.', '_recon.')
-            if not save_filename.endswith('.png'):
-                save_filename = os.path.splitext(save_filename)[0] + '.png'
+            
+            # Sanitize filename
+            input_base = os.path.basename(args.input)
+            clean_name = "".join([c if c.isalnum() else "_" for c in os.path.splitext(input_base)[0]])
+            save_filename = f"{clean_name}_recon.png"
             
             save_path = os.path.join(output_dir, save_filename)
-            # Stack vertically: nrow=1
-            save_image(grid, save_path, nrow=1)
+            # Horizontal layout: Original then steps 1, 2, 3, 4
+            save_image(grid, save_path, nrow=5)
             print(f"Saved comparison to {save_path}")
             
     else:
@@ -107,20 +109,16 @@ def sample(args):
             v = v * math.sqrt(config.latent_dim)
             
             all_steps = []
-            for s in [1, 2, 4]:
+            for s in [1, 2, 3, 4]:
                 print(f"Generating with {s} steps...")
                 generated = model.decode_multistep(v, steps=s)
                 generated = generated * 0.5 + 0.5
                 all_steps.append(generated)
             
-            # Combine all steps into one vertically stacked grid
-            # Each step is (num_samples, C, H, W)
-            # Cat on dim 0 gives (3 * num_samples, C, H, W)
-            # nrow=int(num_samples**0.5) keeps the original square grid per step, 
-            # but since they follow each other, they stack vertically.
+            # One column per noise (num_samples columns), rows are steps 1, 2, 3, 4
             full_grid = torch.cat(all_steps, dim=0)
             save_path = os.path.join(output_dir, 'samples_multistep.png')
-            save_image(full_grid, save_path, nrow=int(args.num_samples**0.5))
+            save_image(full_grid, save_path, nrow=args.num_samples)
             print(f"Saved consolidated samples to {save_path}")
 
 if __name__ == "__main__":

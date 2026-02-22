@@ -60,7 +60,6 @@ let sourceLatent: Float32Array | null = null;
 let orbitA: Float32Array;
 let orbitB: Float32Array;
 
-let currentCornerIndices = [-1, -1, -1, -1];
 let nextCornerIndex = 0;
 let targetInterpX = 0.5;
 let targetInterpY = 0.5;
@@ -153,7 +152,6 @@ function getPixelsFromCanvas(ctx: CanvasRenderingContext2D): Float32Array {
 
 function setSourceLatent(data: Float32Array) {
     sourceLatent = new Float32Array(data);
-    const radius = Math.sqrt(LATENT_DIM);
     for (let i = 0; i < LATENT_DIM; i++) {
         orbitA[i] = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
         orbitB[i] = Math.sqrt(-2.0 * Math.log(Math.max(1e-10, Math.random()))) * Math.cos(2.0 * Math.PI * Math.random());
@@ -289,9 +287,7 @@ async function masterLoop() {
                 }
 
                 sessionBusy = true;
-                const start = performance.now();
                 const output = await engine.decode(latent);
-                const end = performance.now();
                 drawToCanvas(randomCtx, output);
 
                 frames++;
@@ -366,6 +362,7 @@ async function handleImageUrl(url: string) {
         const cornerIdx = nextCornerIndex;
         drawImageCenterCrop(cornerCtxs[cornerIdx], img);
         const pixels = getPixelsFromCanvas(cornerCtxs[cornerIdx]);
+        if (!engine) return;
         const latent = await engine.encode(pixels);
         cornerLatents[cornerIdx] = latent;
 

@@ -92,7 +92,7 @@ async function runDiagnostics() {
         ];
 
         for (const limit of importantLimits) {
-            const val = device.limits[limit as keyof GPUDeviceLimits];
+            const val = device.limits[limit as keyof GPUSupportedLimits];
             limitsHtml += `<div class="info-row"><span class="info-label">${limit}</span><span class="info-value">${val}</span></div>`;
         }
         limitsInfoEl.innerHTML = limitsHtml;

@@ -4,21 +4,23 @@ Unofficial implementation of **[Image Generation with a Sphere Encoder](https://
 
 Official project page and code (when available): https://sphere-encoder.github.io/
 
-The Sphere Encoder is an efficient generative framework that produces high-quality images in a single forward pass. Unlike diffusion models that require many iterations, the Sphere Encoder maps images onto a spherical latent space and learns to decode them back. It achieves performance competitive with state-of-the-art diffusion models in as few as 1 to 4 steps.
+    The Sphere Encoder is an efficient generative framework that produces high-quality images in a single forward pass. Unlike diffusion models that require many iterations, the Sphere Encoder maps images onto a spherical latent space and learns to decode them back. It achieves performance competitive with state-of-the-art diffusion models in as few as 1 to 4 steps.
+
+**WARNING**: the project was made using Gemini, some important features, especially the latent dimension computation and multi-step reconstruction may be plain wrong, better wait for the official implementation :)
 
 
 ## Training
 
-## Datasets
+### Datasets
 You can download and prepare small datasets them using the provided utility scripts.
 
-### CIFAR-10 (10K 32*32 images)
+#### CIFAR-10 (10K 32*32 images)
 Automatically downloads and extracts the CIFAR-10 dataset using `torchvision`.
 ```bash
 python download_cifar.py
 ```
 
-### FFHQ (70K 64*64 images)
+#### FFHQ (70K 64*64 images)
 Downloads the FFHQ (64x64) dataset from Hugging Face and prepares it for training.
 ```bash
 python download_faces.py
@@ -84,19 +86,48 @@ The `sampling.py` script allows you to generate new images from random noise or 
 
 ### Sampling & Reconstruction Call
 ```bash
-# suppose your model is saved as "results/cifar10_20260219_182845/checkpoints/checkpoint_latest.pth"
+# suppose your model is saved as "results\ffhq_64_20260220_183709\checkpoints\checkpoint_latest.pth"
+
 # Generate 16 random samples (saved to samples/cifar10_.../)
-python sampling.py --checkpoint results/cifar10_20260219_182845/checkpoints/checkpoint_latest.pth --num_samples 16
+# Output: samples_multistep.png (Rows: steps 1, 2, 3, 4 | Columns: noise samples)
+python sampling.py --checkpoint results\ffhq_64_20260220_183709\checkpoints\checkpoint_latest.pth --num_samples 6
 ```
-![step 1](./sample/cifar10_20260219_182845/sample_step_1.png)
-![step 2](./sample/cifar10_20260219_182845/sample_step_2.png)
-![step 4](./sample/cifar10_20260219_182845/sample_step_4.png)
+![samples](./samples/ffhq_64_20260220_183709/samples_multistep.png)
+display increasing steps count vertically
+
 ```bash
 # Reconstruct a specific image with multi-step enhancement
 # 
-python sampling.py --checkpoint results/cifar10_20260219_182845/checkpoints/checkpoint_latest.pth --input "frontend/public/images/flower (5).jpg"
+python sampling.py --checkpoint results\ffhq_64_20260220_183709\checkpoints\checkpoint_latest.pth --input "frontend/public/images/ffhq (7).png"
 ```
-![reconstruct](./sample/cifar10_20260219_182845/flower_5_recon.png)
+![reconstruct](./samples/ffhq_64_20260220_183709/ffhq__7__recon.png)
+display source image then increasing steps count horizontally
+
+
+# frontend 
+
+The frontend is a web application that lets you generate new images from random noise and existing images using a trained checkpoint.
+
+
+## ONNX Export
+It is possible to export checkpoints to regular ONNX format, a metadata file is also provided to specify the model parameters (latent space size, image size, etc). 
+
+
+```bash
+python convert.py --checkpoint results\ffhq_64_20260220_183709\checkpoints\checkpoint_latest.pth --output_dir frontend/public/models/ffhq_64
+```
+will produces 3 files:
+```
+decoder.onnx
+encoder.onnx
+metadata.json
+```
+that can be used with [ONNX](https://github.com/microsoft/onnxjs).
+
+
+## pure WebGPU implementation
+since the model is rather simple, I wanted to try a pure [WebGPU](https://webgpu.com/) implementation to avoid loading 30Mb of WASM upfront.
+
 
 ## Quantization & Export
 
@@ -116,6 +147,9 @@ For deployment (e.g., in the WebGPU frontend), models can be exported to a optim
 | **Q8** | 8 | 1 byte | ~8.7 MB |
 | **Q4** | 4 | 0.5 byte | ~4.4 MB |
 
+
+## **NB** Q8 gives decent results at 25% of the FP32 size.
+
 ### Exporting Models
 Use `export_weights.py` to convert a PyTorch checkpoint to the WebGPU-compatible binary format.
 ```bash
@@ -126,6 +160,19 @@ To export all supported modes for the current production models, run:
 ```bash
 python batch_export.py
 ```
+
+# Frontend test
+
+install and run the frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+by default lthe app is exposed to your local network (e.g. http://[IP_ADDRESS]), to enable https set: `https: true` in the vite.config.ts `frontend\vite.config.ts` (this should let you test on your phone).
+
+
 
 ## License
 MIT

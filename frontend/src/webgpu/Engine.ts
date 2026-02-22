@@ -112,7 +112,7 @@ export class WebGPUEngine {
             size: pixels.byteLength,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
         });
-        this.device.queue.writeBuffer(inputBuffer, 0, pixels);
+        (this.device.queue as any).writeBuffer(inputBuffer, 0, pixels);
         let currentInput = inputBuffer;
 
         const modeEnum = this.getModeEnum(this.metadata.quant_mode);
@@ -229,7 +229,7 @@ export class WebGPUEngine {
         let currentSize = 4;
 
         const inputBuffer = this.device.createBuffer({ size: latent.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-        this.device.queue.writeBuffer(inputBuffer, 0, latent);
+        (this.device.queue as any).writeBuffer(inputBuffer, 0, latent);
         let currentInput = inputBuffer;
 
         const modeEnum = this.getModeEnum(this.metadata.quant_mode);
