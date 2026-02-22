@@ -93,6 +93,9 @@ The `sampling.py` script allows you to generate new images from random noise or 
 | `--input` | `str` | `None` | Optional path to an image for reconstruction comparison |
 
 ### Sampling & Reconstruction Call
+
+using the FFHQ 64*64 model trained for 600 epochs (batch 128, 200 steps per epoch)
+
 ```bash
 # suppose your model is saved as "results\ffhq_64_20260220_183709\checkpoints\checkpoint_latest.pth"
 
@@ -101,6 +104,7 @@ The `sampling.py` script allows you to generate new images from random noise or 
 python sampling.py --checkpoint results\ffhq_64_20260220_183709\checkpoints\checkpoint_latest.pth --num_samples 6
 ```
 ![samples](./samples/ffhq_64_20260220_183709/samples_multistep.png)
+
 display increasing steps count vertically
 
 ```bash
@@ -108,7 +112,12 @@ display increasing steps count vertically
 # 
 python sampling.py --checkpoint results\ffhq_64_20260220_183709\checkpoints\checkpoint_latest.pth --input "frontend/public/images/ffhq (7).png"
 ```
+![reconstruct](./samples/ffhq_64_20260220_183709/ffhq__1__recon.png)
+![reconstruct](./samples/ffhq_64_20260220_183709/ffhq__2__recon.png)
+![reconstruct](./samples/ffhq_64_20260220_183709/ffhq__3__recon.png)
+![reconstruct](./samples/ffhq_64_20260220_183709/ffhq__4__recon.png)
 ![reconstruct](./samples/ffhq_64_20260220_183709/ffhq__7__recon.png)
+
 display source image then increasing steps count horizontally
 
 
